@@ -1,0 +1,1199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>APS Hex District Map</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0d1117; font-family: 'Segoe UI', system-ui, sans-serif; overflow: hidden; height: 100vh; width: 100vw; }
+  #renderCanvas { width: 100%; height: 100%; display: block; touch-action: none; }
+
+  #header {
+    position: absolute; top: 0; left: 0; right: 0;
+    padding: 14px 20px;
+    background: linear-gradient(180deg, rgba(13,17,23,0.97) 0%, rgba(13,17,23,0) 100%);
+    display: flex; align-items: center; gap: 14px;
+    pointer-events: none; z-index: 10;
+  }
+  #header .bar { width: 4px; height: 36px; background: #e8232a; border-radius: 2px; flex-shrink: 0; }
+  #header h1 { font-size: 15px; font-weight: 700; letter-spacing: 0.09em; text-transform: uppercase; color: #f0f6fc; }
+  #header .sub { font-size: 11px; color: #6e7681; letter-spacing: 0.05em; margin-top: 2px; }
+
+  #tooltip {
+    position: absolute; pointer-events: none;
+    background: rgba(22,27,34,0.97);
+    border: 1px solid rgba(48,54,61,0.8);
+    border-left: 3px solid #00D4FF;
+    border-radius: 6px; padding: 10px 14px;
+    display: none; z-index: 20; max-width: 230px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+  }
+  #tooltip .tt-name { font-size: 13px; font-weight: 700; color: #f0f6fc; line-height: 1.3; margin-bottom: 3px; }
+  #tooltip .tt-meta { font-size: 11px; color: #8b949e; }
+  #tooltip .tt-coord { font-size: 10px; color: #3d444d; margin-top: 5px; font-family: monospace; }
+
+  #panel-container {
+    position: absolute; top: 70px; right: 20px;
+    display: flex; flex-direction: row; gap: 8px;
+    align-items: flex-start;
+    z-index: 10;
+    pointer-events: none;
+  }
+  .sp-col {
+    width: 270px;
+    background: rgba(13,17,23,0.98);
+    border: 1px solid rgba(48,54,61,0.8);
+    border-top: 3px solid #00D4FF;
+    border-radius: 8px; padding: 0;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.7);
+    transform: translateX(310px);
+    opacity: 0;
+    transition: transform 0.32s cubic-bezier(0.22,1,0.36,1), opacity 0.28s ease;
+    pointer-events: none;
+    overflow: hidden;
+    flex-shrink: 0;
+  }
+  .sp-col.open {
+    transform: translateX(0);
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .sp-col:nth-child(2) { transition-delay: 0.04s; }
+  .sp-col:nth-child(3) { transition-delay: 0.08s; }
+  .sp-header { padding: 12px 14px 10px; border-bottom: 1px solid rgba(48,54,61,0.5); position: relative; }
+  .sp-col .sp-label { font-size: 9px; text-transform: uppercase; letter-spacing: 0.12em; color: #00D4FF; margin-bottom: 4px; font-weight: 700; }
+  .sp-col .sp-name { font-size: 14px; font-weight: 700; color: #f0f6fc; line-height: 1.3; margin-bottom: 2px; padding-right: 20px; }
+  .sp-col .sp-meta { font-size: 10px; color: #6e7681; }
+  .sp-close { position: absolute; top: 10px; right: 10px; cursor: pointer; color: #6e7681; font-size: 14px; background: none; border: none; line-height: 1; padding: 2px; }
+  .sp-close:hover { color: #f0f6fc; }
+  .sp-scores { padding: 10px 14px 14px; }
+  .sp-metric { margin-bottom: 13px; }
+  .sp-metric:last-child { margin-bottom: 0; }
+  .sp-metric-header { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 3px; }
+  .sp-metric-name { font-size: 10px; color: #8b949e; letter-spacing: 0.03em; }
+  .sp-metric-arrow { font-size: 10px; font-weight: 700; margin-left: 2px; }
+  .sp-metric-val { font-size: 13px; font-weight: 700; }
+  .sp-metric-val.na { color: #3d444d; font-size: 11px; font-weight: 400; }
+  .sp-sparkline { width: 100%; height: 38px; display: block; overflow: visible; }
+  .sp-year-labels { display: flex; justify-content: space-between; padding-bottom: 8px; margin-bottom: 4px; border-bottom: 1px solid rgba(48,54,61,0.35); }
+  .sp-year-labels span { font-size: 9px; color: #3d444d; }
+  .sp-trend-up { color: #3fb950; }
+  .sp-trend-down { color: #f85149; }
+  .sp-trend-flat { color: #8b949e; }
+
+  #controls { position: absolute; bottom: 20px; right: 20px; display: flex; flex-direction: column; gap: 6px; z-index: 10; }
+  .ctrl-btn {
+    width: 36px; height: 36px;
+    background: rgba(22,27,34,0.92);
+    border: 1px solid rgba(48,54,61,0.7);
+    border-radius: 6px; color: #8b949e; font-size: 18px;
+    cursor: pointer; display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s; line-height: 1;
+  }
+  .ctrl-btn:hover { background: rgba(33,41,51,1); border-color: rgba(99,110,123,0.7); color: #f0f6fc; }
+
+  #statsbar {
+    position: absolute; bottom: 20px; left: 20px;
+    background: rgba(22,27,34,0.92);
+    border: 1px solid rgba(48,54,61,0.7);
+    border-radius: 6px; padding: 8px 14px;
+    font-size: 11px; color: #6e7681; letter-spacing: 0.04em; z-index: 10;
+  }
+  #statsbar span { color: #f0f6fc; font-weight: 700; }
+
+  #legend {
+    position: absolute; top: 70px; left: 20px;
+    background: rgba(22,27,34,0.92);
+    border: 1px solid rgba(48,54,61,0.7);
+    border-radius: 6px; padding: 10px 14px;
+    font-size: 11px; z-index: 10;
+    pointer-events: none;
+  }
+  #legend .l-title { color: #6e7681; letter-spacing: 0.08em; text-transform: uppercase; font-size: 9px; margin-bottom: 8px; }
+  .l-item { display: flex; align-items: center; gap: 8px; color: #8b949e; margin-bottom: 5px; font-size: 11px; }
+  .l-item:last-child { margin-bottom: 0; }
+  .l-swatch { width: 14px; height: 14px; border-radius: 3px; flex-shrink: 0; }
+  .sp-rankgap {
+    display: flex; justify-content: space-between; align-items: baseline;
+    margin-top: 3px; margin-bottom: 0; padding-bottom: 8px;
+    border-bottom: 1px solid rgba(48,54,61,0.35);
+    font-size: 10px;
+  }
+  .sp-rankgap:last-of-type { border-bottom: none; }
+  .sp-rank { color: #6e7681; }
+  .sp-rank span { color: #8b949e; font-weight: 600; }
+  .sp-gap { font-weight: 700; }
+  .sp-gap.above { color: #3fb950; }
+  .sp-gap.below { color: #f85149; }
+  .sp-gap.even  { color: #6e7681; }
+  /* ── Legend collapse ─────────────────────────────────────────────────────── */
+  #legend-btn {
+    display: none; /* shown only on mobile */
+    position: absolute; top: 70px; left: 20px;
+    width: 44px; height: 44px;
+    background: rgba(22,27,34,0.92);
+    border: 1px solid rgba(48,54,61,0.7);
+    border-radius: 6px; color: #8b949e; font-size: 18px;
+    cursor: pointer; align-items: center; justify-content: center;
+    z-index: 11;
+  }
+  #legend-btn:hover { color: #f0f6fc; }
+  #legend-popup {
+    position: absolute; top: 122px; left: 20px;
+    background: rgba(22,27,34,0.97);
+    border: 1px solid rgba(48,54,61,0.7);
+    border-radius: 6px; padding: 10px 14px;
+    font-size: 11px; z-index: 12;
+    display: none;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+  }
+  #legend-popup.open { display: block; }
+
+  /* ── Mobile bottom drawer ─────────────────────────────────────────────────── */
+  #drawer {
+    display: none;
+    position: fixed; left: 0; right: 0; bottom: 0;
+    background: rgba(13,17,23,0.98);
+    border-top: 3px solid #00D4FF;
+    border-radius: 16px 16px 0 0;
+    z-index: 20;
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(0.22,1,0.36,1);
+    max-height: 68vh;
+    overflow: hidden;
+    flex-direction: column;
+    box-shadow: 0 -8px 40px rgba(0,0,0,0.7);
+  }
+  #drawer.open { transform: translateY(0); }
+  #drawer-handle {
+    display: flex; align-items: center; justify-content: center;
+    padding: 10px 0 4px;
+    cursor: pointer; flex-shrink: 0;
+  }
+  #drawer-handle-bar {
+    width: 36px; height: 4px; border-radius: 2px;
+    background: rgba(99,110,123,0.5);
+  }
+  #drawer-tabs {
+    display: flex; flex-direction: row;
+    border-bottom: 1px solid rgba(48,54,61,0.5);
+    overflow-x: auto; flex-shrink: 0;
+    scrollbar-width: none;
+  }
+  #drawer-tabs::-webkit-scrollbar { display: none; }
+  .drawer-tab {
+    flex-shrink: 0; padding: 8px 14px;
+    font-size: 11px; font-weight: 600; color: #6e7681;
+    cursor: pointer; border-bottom: 2px solid transparent;
+    white-space: nowrap;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .drawer-tab.active { color: #00D4FF; border-bottom-color: #00D4FF; }
+  .drawer-tab .tab-close {
+    margin-left: 6px; font-size: 11px; color: #3d444d;
+  }
+  .drawer-tab .tab-close:hover { color: #f85149; }
+  #drawer-body {
+    overflow-y: auto; flex: 1;
+    padding: 10px 16px 24px;
+    -webkit-overflow-scrolling: touch;
+  }
+  /* drawer panel content reuses .sp-scores styles */
+  #drawer-body .sp-year-labels { margin-top: 6px; }
+
+  /* ── Mobile breakpoint ───────────────────────────────────────────────────── */
+  @media (max-width: 767px) {
+    /* Larger touch controls */
+    .ctrl-btn { width: 44px; height: 44px; font-size: 20px; }
+    #controls { gap: 8px; bottom: 16px; right: 16px; }
+
+    /* Hide desktop panel container, show drawer */
+    #panel-container { display: none !important; }
+    #drawer { display: flex; }
+
+    /* Hide desktop legend, show icon button */
+    #legend { display: none; }
+    #legend-btn { display: flex; }
+
+    /* Statsbar smaller */
+    #statsbar { font-size: 10px; padding: 6px 10px; bottom: 16px; left: 16px; max-width: calc(100vw - 100px); }
+
+    /* Tooltip suppressed on touch */
+    #tooltip { display: none !important; }
+  }
+  @media (min-width: 768px) {
+    #drawer { display: none !important; }
+    #legend-btn { display: none !important; }
+  }
+  #spark-tip {
+    position: fixed;
+    background: rgba(13,17,23,0.97);
+    border: 1px solid rgba(99,110,123,0.5);
+    border-radius: 4px;
+    padding: 4px 8px;
+    font-size: 11px;
+    font-weight: 700;
+    color: #f0f6fc;
+    pointer-events: none;
+    display: none;
+    z-index: 50;
+    white-space: nowrap;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+  }
+  #spark-tip .st-year { font-size: 9px; font-weight: 400; color: #8b949e; display: block; margin-bottom: 1px; }
+  #label-layer {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    pointer-events: none; z-index: 5; overflow: hidden;
+  }
+  .hex-label {
+    position: absolute;
+    transform: translate(-50%, -50%);
+    text-align: center;
+    color: rgba(255,255,255,0.90);
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    font-weight: 700;
+    font-size: 11px;
+    line-height: 1.25;
+    text-shadow: 0 1px 4px rgba(0,0,0,1), 0 0 8px rgba(0,0,0,0.8);
+    pointer-events: none;
+    white-space: pre-line;
+  }
+</style>
+</head>
+<body>
+
+<div id="header">
+  <div class="bar"></div>
+  <div>
+    <h1>APS District Hex Map</h1>
+    <div class="sub">Albuquerque Public Schools · Hex Grid Cartogram</div>
+  </div>
+</div>
+
+<canvas id="renderCanvas"></canvas>
+<div id="label-layer"></div>
+
+<div id="tooltip">
+  <div class="tt-name" id="tt-name"></div>
+  <div class="tt-meta" id="tt-meta"></div>
+  <div class="tt-coord" id="tt-coord"></div>
+</div>
+
+<div id="panel-container"></div>
+
+<button id="legend-btn" onclick="toggleLegend()" title="Legend">⬡</button>
+<div id="legend-popup">
+  <div class="l-title">Legend</div>
+  <div class="l-item"><div class="l-swatch" style="background:#1a3870;border:1px solid #0d1e3a;"></div>School hex</div>
+  <div class="l-item"><div class="l-swatch" style="background:#2e5c9e;border:1px solid #1a3870;"></div>Hovered</div>
+  <div class="l-item"><div class="l-swatch" style="background:transparent;border:2px solid #00D4FF;border-radius:50%;"></div>Selected</div>
+</div>
+
+<div id="legend">
+  <div class="l-title">Legend</div>
+  <div class="l-item"><div class="l-swatch" style="background:#1a3870;border:1px solid #0d1e3a;"></div>School hex</div>
+  <div class="l-item"><div class="l-swatch" style="background:#2e5c9e;border:1px solid #1a3870;"></div>Hovered</div>
+  <div class="l-item"><div class="l-swatch" style="background:transparent;border:2px solid #00D4FF;border-radius:50%;"></div>Selected</div>
+</div>
+
+<!-- Mobile bottom drawer -->
+<div id="drawer">
+  <div id="drawer-handle" onclick="closeDrawer()">
+    <div id="drawer-handle-bar"></div>
+  </div>
+  <div id="drawer-tabs"></div>
+  <div id="drawer-body"></div>
+</div>
+
+<div id="statsbar">
+  <span id="stat-count">0</span> schools loaded · hover to explore · click to select
+</div>
+
+<div id="controls">
+  <button class="ctrl-btn" onclick="zoomIn()" title="Zoom in">+</button>
+  <button class="ctrl-btn" onclick="zoomOut()" title="Zoom out">−</button>
+  <button class="ctrl-btn" onclick="resetCamera()" title="Reset view" style="font-size:13px;">⌂</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/babylonjs/7.26.2/babylon.js"></script>
+<script>
+const GEOJSON = {"type":"FeatureCollection","features":[{"type":"Feature","properties":{"locationid":407,"sch_name":"Cleveland Middle School","level":"Middle","grid_col":5,"grid_row":7,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.5528195815842,35.14665591819756],[-106.5767009133701,35.157572443486416],[-106.60014883622894,35.146040008877556],[-106.59970965677074,35.12359585883541],[-106.57583553108046,35.1126836302166],[-106.55239337927746,35.12421125878088],[-106.5528195815842,35.14665591819756]]]}},{"type":"Feature","properties":{"locationid":465,"sch_name":"Washington Middle School","level":"Middle","grid_col":4,"grid_row":6,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.64612166666896,35.07807448240489],[-106.6699943167541,35.08897294377965],[-106.69340908483481,35.07742324191122],[-106.69294549591147,35.05497989061708],[-106.66908006934338,35.04408569834246],[-106.64567100873482,35.05563059206529],[-106.64612166666896,35.07807448240489]]]}},{"type":"Feature","properties":{"locationid":410,"sch_name":"Garfield Middle School","level":"Middle","grid_col":3,"grid_row":7,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.64747663353317,35.145405623595316],[-106.67136948352444,35.15630314853144],[-106.69480293047474,35.14475276422358],[-106.69433780155393,35.12230967874489],[-106.67045219903562,35.11141643384768],[-106.64702447852127,35.1229619981999],[-106.64747663353317,35.145405623595316]]]}},{"type":"Feature","properties":{"locationid":413,"sch_name":"Grant Middle School","level":"Middle","grid_col":6,"grid_row":5,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.50425061108409,35.079917626650925],[-106.52810600772156,35.09084450851954],[-106.55154238690828,35.07932167661363],[-106.55111759581474,35.05687675392156],[-106.52726936078578,35.04595416602731],[-106.50383875574823,35.057472210656194],[-106.50425061108409,35.079917626650925]]]}},{"type":"Feature","properties":{"locationid":450,"sch_name":"Ernie Pyle Middle School","level":"Middle","grid_col":3,"grid_row":5,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.66908006934338,35.04408569834246],[-106.69294549591147,35.05497989061708],[-106.71634733383652,35.04342606430417],[-106.71587805885233,35.02098285522243],[-106.69201985413197,35.010092922426644],[-106.66862370310767,35.02164194303382],[-106.66908006934338,35.04408569834246]]]}},{"type":"Feature","properties":{"locationid":416,"sch_name":"Hayes Middle School","level":"Middle","grid_col":6,"grid_row":6,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.52852502542596,35.1132895483652],[-106.55239337927746,35.12421125878088],[-106.57583553108046,35.1126836302166],[-106.57540355693122,35.09023909170322],[-106.55154238690828,35.07932167661363],[-106.52810600772156,35.09084450851954],[-106.52852502542596,35.1132895483652]]]}},{"type":"Feature","properties":{"locationid":420,"sch_name":"Jackson Middle School","level":"Middle","grid_col":7,"grid_row":6,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.48121312926934,35.113877010754585],[-106.50507568902479,35.12480819622017],[-106.52852502542596,35.1132895483652],[-106.52810600772156,35.09084450851954],[-106.50425061108409,35.079917626650925],[-106.48080706953291,35.09143148483981],[-106.48121312926934,35.113877010754585]]]}},{"type":"Feature","properties":{"locationid":490,"sch_name":"James Monroe Middle School","level":"Middle","grid_col":2,"grid_row":9,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.69620140625253,35.21208148854285],[-106.72012026779426,35.22296854202076],[-106.74356516254154,35.21140848965744],[-106.7430854732785,35.18896622635139],[-106.71917390396253,35.178083455509565],[-106.6957347322586,35.18963866915286],[-106.69620140625253,35.21208148854285]]]}},{"type":"Feature","properties":{"locationid":445,"sch_name":"Jimmy Carter Middle School","level":"Middle","grid_col":2,"grid_row":5,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.69340908483481,35.07742324191122],[-106.7172874415581,35.088312216406706],[-106.7406949646912,35.07675357503363],[-106.74021844646182,35.05431077802802],[-106.71634733383652,35.04342606430417],[-106.69294549591147,35.05497989061708],[-106.69340908483481,35.07742324191122]]]}},{"type":"Feature","properties":{"locationid":405,"sch_name":"John Adams Middle School","level":"Middle","grid_col":3,"grid_row":6,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.67045219903562,35.11141643384768],[-106.69433780155393,35.12230967874489],[-106.71775827543318,35.11075515936613],[-106.7172874415581,35.088312216406706],[-106.69340908483481,35.07742324191122],[-106.6699943167541,35.08897294377965],[-106.67045219903562,35.11141643384768]]]}},{"type":"Feature","properties":{"locationid":427,"sch_name":"Kennedy Middle School","level":"Middle","grid_col":7,"grid_row":5,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.45695746849114,35.08049514294867],[-106.48080706953291,35.09143148483981],[-106.50425061108409,35.079917626650925],[-106.50383875574823,35.057472210656194],[-106.47999629562395,35.04654017099363],[-106.45655855040879,35.05804924890324],[-106.45695746849114,35.08049514294867]]]}},{"type":"Feature","properties":{"locationid":485,"sch_name":"L.B. Johnson Middle School","level":"Middle","grid_col":3,"grid_row":8,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.67182888684397,35.17874637308686],[-106.6957347322586,35.18963866915286],[-106.71917390396253,35.178083455509565],[-106.7187015060636,35.15564077894812],[-106.69480293047474,35.14475276422358],[-106.67136948352444,35.15630314853144],[-106.67182888684397,35.17874637308686]]]}},{"type":"Feature","properties":{"locationid":435,"sch_name":"Madison Middle School","level":"Middle","grid_col":6,"grid_row":7,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.50548891262943,35.14725334973697],[-106.52936445184638,35.15817936511029],[-106.5528195815842,35.14665591819756],[-106.55239337927746,35.12421125878088],[-106.52852502542596,35.1132895483652],[-106.50507568902479,35.12480819622017],[-106.50548891262943,35.14725334973697]]]}},{"type":"Feature","properties":{"locationid":440,"sch_name":"Mckinley Middle School","level":"Middle","grid_col":4,"grid_row":7,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.60014883622894,35.146040008877556],[-106.62403593827943,35.15694703734457],[-106.64747663353317,35.145405623595316],[-106.64702447852127,35.1229619981999],[-106.62314460326893,35.11205925809669],[-106.59970965677074,35.12359585883541],[-106.60014883622894,35.146040008877556]]]}},{"type":"Feature","properties":{"locationid":415,"sch_name":"Harrison Middle School","level":"Middle","grid_col":3,"grid_row":4,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.69201985413197,35.010092922426644],[-106.71587805885233,35.02098285522243],[-106.73926698887195,35.00942491752171],[-106.73879204836108,34.98698185408292],[-106.71494106380014,34.97609617115175],[-106.69155780015659,34.98764930559142],[-106.69201985413197,35.010092922426644]]]}},{"type":"Feature","properties":{"locationid":452,"sch_name":"Roosevelt Middle School","level":"Middle","grid_col":9,"grid_row":5,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.36236725462702,35.081594867566814],[-106.38620519792525,35.092550109120744],[-106.40966300203458,35.08105422380363],[-106.4092770226546,35.05860786696145],[-106.38544617881017,35.0476569440884],[-106.36199421535142,35.059148063183855],[-106.36236725462702,35.081594867566814]]]}},{"type":"Feature","properties":{"locationid":457,"sch_name":"Taylor Middle School","level":"Middle","grid_col":4,"grid_row":8,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.62448234534688,35.17939079461284],[-106.64838244446983,35.19029260923211],[-106.67182888684397,35.17874637308686],[-106.67136948352444,35.15630314853144],[-106.64747663353317,35.145405623595316],[-106.62403593827943,35.15694703734457],[-106.62448234534688,35.17939079461284]]]}},{"type":"Feature","properties":{"locationid":492,"sch_name":"Tony Hillerman Middle School","level":"Middle","grid_col":2,"grid_row":8,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.71917390396253,35.178083455509565],[-106.7430854732785,35.18896622635139],[-106.76651735362249,35.17740204383888],[-106.76603196286398,35.15495993055023],[-106.74212768403991,35.144081432689575],[-106.7187015060636,35.15564077894812],[-106.71917390396253,35.178083455509565]]]}},{"type":"Feature","properties":{"locationid":475,"sch_name":"Truman Middle School","level":"Middle","grid_col":2,"grid_row":4,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.71634733383652,35.04342606430417],[-106.74021844646182,35.05431077802802],[-106.76361304114585,35.0427480277222],[-106.76313085911532,35.020305380097],[-106.73926698887195,35.00942491752171],[-106.71587805885233,35.02098285522243],[-106.71634733383652,35.04342606430417]]]}},{"type":"Feature","properties":{"locationid":460,"sch_name":"Van Buren Middle School","level":"Middle","grid_col":5,"grid_row":5,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.55154238690828,35.07932167661363],[-106.57540355693122,35.09023909170322],[-106.59883275306638,35.07870729459436],[-106.59839502775779,35.05626288045472],[-106.57454104000706,35.045349751066695],[-106.55111759581474,35.05687675392156],[-106.55154238690828,35.07932167661363]]]}},{"type":"Feature","properties":{"locationid":425,"sch_name":"Jefferson Middle School","level":"Middle","grid_col":5,"grid_row":6,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.62314460326893,35.11205925809669],[-106.64702447852127,35.1229619981999],[-106.67045219903562,35.11141643384768],[-106.6699943167541,35.08897294377965],[-106.64612166666896,35.07807448240489],[-106.622699674245,35.089615236176584],[-106.62314460326893,35.11205925809669]]]}},{"type":"Feature","properties":{"locationid":448,"sch_name":"Polk Middle School","level":"Middle","grid_col":2,"grid_row":3,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.71494106380014,34.97609617115175],[-106.73879204836108,34.98698185408292],[-106.76216809269775,34.97541981803615],[-106.76168750714783,34.95297690366293],[-106.7378437410391,34.94209546098916],[-106.71447334260031,34.95365269622444],[-106.71494106380014,34.97609617115175]]]}},{"type":"Feature","properties":{"locationid":470,"sch_name":"Wilson Middle School","level":"Middle","grid_col":4,"grid_row":5,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.57454104000706,35.045349751066695],[-106.59839502775779,35.05626288045472],[-106.62181129046462,35.04472692789321],[-106.62136783463289,35.02228264158967],[-106.59752102757862,35.0113737882856],[-106.57411049618808,35.02290494900252],[-106.57454104000706,35.045349751066695]]]}},{"type":"Feature","properties":{"locationid":418,"sch_name":"Hoover Middle School","level":"Middle","grid_col":8,"grid_row":6,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.45815687240311,35.147832301731924],[-106.48202659676633,35.158767800424016],[-106.50548891262943,35.14725334973697],[-106.50507568902479,35.12480819622017],[-106.48121312926934,35.113877010754585],[-106.45775662900408,35.12538666939151],[-106.45815687240311,35.147832301731924]]]}},{"type":"Feature","properties":{"locationid":480,"sch_name":"Eisenhower Middle School","level":"Middle","grid_col":6,"grid_row":8,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.48243400551354,35.18121306412142],[-106.50631673161318,35.192143394090856],[-106.52978486158044,35.180624141951746],[-106.52936445184638,35.15817936511029],[-106.50548891262943,35.14725334973697],[-106.48202659676633,35.158767800424016],[-106.48243400551354,35.18121306412142]]]}},{"type":"Feature","properties":{"locationid":430,"sch_name":"Desert Ridge Middle School","level":"Middle","grid_col":5,"grid_row":8,"filled":true},"geometry":{"type":"Polygon","coordinates":[[[-106.50673132799723,35.214588284870466],[-106.53062707664803,35.22551343242781],[-106.55410101919824,35.21398936942975],[-106.55367340102636,35.19154497355111],[-106.52978486158044,35.180624141951746],[-106.50631673161318,35.192143394090856],[-106.50673132799723,35.214588284870466]]]}}]};
+
+const canvas = document.getElementById('renderCanvas');
+const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+
+let scene, camera;
+let hexMeshes = [];
+let selectedMeshes = []; // up to 3
+let lastHovered = null;
+
+// Orthographic view half-height in world units
+let orthoH = 10;
+// Pan offset
+let panX = 0, panY = 0;
+
+const C = {
+  fill:      new BABYLON.Color3(0.10, 0.22, 0.42),
+  fillHover: new BABYLON.Color3(0.18, 0.36, 0.62),
+  fillSel:   new BABYLON.Color3(0.098, 0.22, 0.38),
+  edge:      new BABYLON.Color3(0.10, 0.20, 0.32),
+  edgeHover: new BABYLON.Color3(0.30, 0.44, 0.60),
+  edgeSel:   new BABYLON.Color3(0.22, 0.45, 0.75),
+  bg:        new BABYLON.Color4(0.051, 0.067, 0.09, 1)
+};
+
+const HEX_SIZE = 1.0;
+const GAP = 0.94;
+
+function hexCenterXY(col, row) {
+  const w = Math.sqrt(3) * HEX_SIZE;
+  const x = -(w * col + (row % 2 !== 0 ? w * 0.5 : 0));
+  const y = 1.5 * HEX_SIZE * row;
+  return [x, y];
+}
+
+function hexCorners(cx, cy, size) {
+  const pts = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 180 * (60 * i - 30);
+    pts.push(new BABYLON.Vector3(cx + size * Math.cos(a), cy + size * Math.sin(a), 0));
+  }
+  return pts;
+}
+
+function buildHexSlab(scene, cx, cy, size, name) {
+  const DEPTH = 0.22;
+  const corners = [];
+  for (let i = 0; i < 6; i++) {
+    const a = Math.PI / 180 * (60 * i - 30);
+    corners.push([cx + size * Math.cos(a), cy + size * Math.sin(a)]);
+  }
+  const pos = [], idx = [];
+  pos.push(cx, cy, -DEPTH);
+  for (const c of corners) pos.push(c[0], c[1], -DEPTH);
+  pos.push(cx, cy, 0);
+  for (const c of corners) pos.push(c[0], c[1], 0);
+  for (let i = 0; i < 6; i++) idx.push(0, i+1, ((i+1)%6)+1);
+  for (let i = 0; i < 6; i++) idx.push(7, ((i+1)%6)+8, i+8);
+  for (let i = 0; i < 6; i++) {
+    const a=i+1, b=((i+1)%6)+1, A=i+8, B=((i+1)%6)+8;
+    idx.push(a,b,B, a,B,A);
+  }
+  const normals = new Array(pos.length).fill(0);
+  BABYLON.VertexData.ComputeNormals(pos, idx, normals);
+  const mesh = new BABYLON.Mesh(name, scene);
+  const vd = new BABYLON.VertexData();
+  vd.positions = pos; vd.indices = idx; vd.normals = normals;
+  vd.applyToMesh(mesh);
+  mesh.isPickable = false;
+  return mesh;
+}
+
+function buildHexMesh(scene, cx, cy, size, name) {
+  const pos = [cx, cy, 0];
+  const corners = hexCorners(cx, cy, size);
+  for (const c of corners) pos.push(c.x, c.y, 0);
+  const idx = [];
+  for (let i = 0; i < 6; i++) idx.push(0, i + 1, ((i + 1) % 6) + 1);
+  const normals = [];
+  for (let i = 0; i < 7; i++) normals.push(0, 0, -1);
+  const mesh = new BABYLON.Mesh(name, scene);
+  const vd = new BABYLON.VertexData();
+  vd.positions = pos;
+  vd.indices = idx;
+  vd.normals = normals;
+  vd.applyToMesh(mesh);
+  return mesh;
+}
+
+function buildEdge(scene, cx, cy, size, name) {
+  const corners = hexCorners(cx, cy, size);
+  const pts = [...corners, corners[0]];
+  return BABYLON.MeshBuilder.CreateLines(name, { points: pts }, scene);
+}
+
+function applyOrtho() {
+  const ratio = canvas.clientWidth / canvas.clientHeight;
+  const h = orthoH;
+  const w = h * ratio;
+  camera.orthoTop    =  h + panY;
+  camera.orthoBottom = -h + panY;
+  camera.orthoLeft   = -w + panX;
+  camera.orthoRight  =  w + panX;
+}
+
+function flashHex(mesh) {
+  const keys = [
+    { frame: 0,  value: 0 },
+    { frame: 5,  value: 0.18 },
+    { frame: 18, value: 0 },
+  ];
+  const ease = new BABYLON.CubicEase();
+  ease.setEasingMode(BABYLON.EasingFunction.EASINGMODE_EASEOUT);
+
+  function animateZ(target) {
+    const anim = new BABYLON.Animation(
+      'depress_' + target.name, 'position.z', 60,
+      BABYLON.Animation.ANIMATIONTYPE_FLOAT,
+      BABYLON.Animation.ANIMATIONLOOPMODE_CONSTANT
+    );
+    anim.setKeys(keys);
+    anim.setEasingFunction(ease);
+    target.animations = [anim];
+    scene.beginAnimation(target, 0, 18, false);
+  }
+
+  animateZ(mesh);
+  if (mesh._d.slab) animateZ(mesh._d.slab);
+  if (mesh._d.edge) animateZ(mesh._d.edge);
+}
+
+function wrapHexName(name) {
+  const clean = name.replace(/ Middle School$/, '').replace(/ Middle$/, '');
+  const words = clean.split(' ');
+  if (words.length <= 2) return [clean];
+  const mid = Math.ceil(words.length / 2);
+  return [words.slice(0, mid).join(' '), words.slice(mid).join(' ')];
+}
+
+const createScene = () => {
+  scene = new BABYLON.Scene(engine);
+  scene.clearColor = C.bg;
+
+  // ArcRotateCamera with slight tilt so hex edges are visible
+  camera = new BABYLON.UniversalCamera("cam", new BABYLON.Vector3(0, 0, 10), scene);
+  camera.mode = BABYLON.Camera.ORTHOGRAPHIC_CAMERA;
+  camera.setTarget(BABYLON.Vector3.Zero());
+  camera.fov = 0.5;
+
+  const light = new BABYLON.HemisphericLight("l", new BABYLON.Vector3(0, 0, -1), scene);
+  light.intensity = 1.0;
+  light.diffuse = new BABYLON.Color3(1, 1, 1);
+  light.groundColor = new BABYLON.Color3(0.18, 0.26, 0.38);
+  light.specular = BABYLON.Color3.Black();
+
+  const features = GEOJSON.features;
+  const cols = features.map(f => f.properties.grid_col);
+  const rows = features.map(f => f.properties.grid_row);
+  const midCol = (Math.min(...cols) + Math.max(...cols)) / 2;
+  const midRow = (Math.min(...rows) + Math.max(...rows)) / 2;
+  const [ocx, ocy] = hexCenterXY(midCol, midRow);
+
+  for (const f of features) {
+    const { grid_col, grid_row, sch_name, level, locationid } = f.properties;
+    const [rx, ry] = hexCenterXY(grid_col, grid_row);
+    const cx = rx - ocx;
+    const cy = ry - ocy;
+
+    const mesh = buildHexMesh(scene, cx, cy, HEX_SIZE * GAP, `hex_${locationid}`);
+    const slab = null;
+    const mat = new BABYLON.StandardMaterial(`m_${locationid}`, scene);
+    mat.diffuseColor = C.fill.clone();
+    mat.emissiveColor = C.fill.clone();
+    mat.specularColor = BABYLON.Color3.Black();
+    mat.backFaceCulling = false;
+    mesh.material = mat;
+
+    const edge = buildEdge(scene, cx, cy, HEX_SIZE * GAP * 0.99, `e_${locationid}`);
+    edge.color = C.edge.clone();
+    edge.alpha = 0.9;
+
+    mesh._d = { sch_name, level, locationid, grid_col, grid_row, cx, cy, mat, edge, slab };
+    hexMeshes.push(mesh);
+  }
+
+  document.getElementById('statsbar').innerHTML =
+    `<span id="stat-count">${hexMeshes.length}</span> schools loaded · hover to explore · click to select`;
+
+  // Tilt the entire grid by parenting all meshes to a rotated TransformNode
+  const root = new BABYLON.TransformNode("root", scene);
+  root.rotation.x = 0.38; // ~22 degrees forward tilt
+  for (const mesh of hexMeshes) {
+    mesh.parent = root;
+    mesh._d.edge.parent = root;
+  }
+
+  const labelLayer = document.getElementById('label-layer');
+  labelLayer.innerHTML = '';
+  for (const mesh of hexMeshes) {
+    const d = mesh._d;
+    const div = document.createElement('div');
+    div.className = 'hex-label';
+    div.textContent = wrapHexName(d.sch_name).join('\n');
+    labelLayer.appendChild(div);
+    d.labelDiv = div;
+  }
+
+  applyOrtho();
+  return scene;
+};
+
+function setHex(mesh, fillC, edgeC) {
+  const d = mesh._d;
+  d.mat.diffuseColor = fillC.clone();
+  d.mat.emissiveColor = fillC.clone();
+  d.edge.color = edgeC.clone();
+}
+
+function restoreHex(mesh) {
+  setHex(mesh, C.fill, C.edge);
+}
+
+// ── Pan via drag ──────────────────────────────────────────────────────────────
+let isDragging = false, dragStartX = 0, dragStartY = 0, panStartX = 0, panStartY = 0;
+
+canvas.addEventListener('pointerdown', evt => {
+  dragStartX = evt.clientX;
+  dragStartY = evt.clientY;
+  panStartX = panX;
+  panStartY = panY;
+  isDragging = false;
+  canvas.setPointerCapture(evt.pointerId);
+});
+
+canvas.addEventListener('pointermove', evt => {
+  const dx = evt.clientX - dragStartX;
+  const dy = evt.clientY - dragStartY;
+
+  if (evt.buttons === 1 && (Math.abs(dx) > 3 || Math.abs(dy) > 3 || isDragging)) {
+    isDragging = true;
+    const ratio = canvas.clientWidth / canvas.clientHeight;
+    const worldW = orthoH * ratio * 2;
+    const worldH = orthoH * 2;
+    panX = panStartX - (dx / canvas.clientWidth) * worldW;
+    panY = panStartY + (dy / canvas.clientHeight) * worldH;
+    applyOrtho();
+  }
+
+  if (!isDragging) {
+    const tip = document.getElementById('tooltip');
+    const pick = scene.pick(evt.clientX, evt.clientY);
+
+    // Suppress hover tooltip on mobile — tap opens drawer instead
+    if (isMobile()) {
+      tip.style.display = 'none';
+    } else {
+      if (lastHovered && !selectedMeshes.includes(lastHovered)) {
+        restoreHex(lastHovered);
+        lastHovered = null;
+        tip.style.display = 'none';
+      }
+
+      if (pick.hit && pick.pickedMesh && pick.pickedMesh._d) {
+        const m = pick.pickedMesh;
+        if (!selectedMeshes.includes(m)) setHex(m, C.fillHover, C.edgeHover);
+        lastHovered = m;
+        const d = m._d;
+        const rect = canvas.getBoundingClientRect();
+        let tx = evt.clientX - rect.left + 16;
+        let ty = evt.clientY - rect.top - 8;
+        if (tx + 240 > rect.width) tx = evt.clientX - rect.left - 248;
+        tip.style.left = tx + 'px';
+        tip.style.top = ty + 'px';
+        tip.style.display = 'block';
+        document.getElementById('tt-name').textContent = d.sch_name;
+        document.getElementById('tt-meta').textContent = `${d.level} School · ID ${d.locationid}`;
+        document.getElementById('tt-coord').textContent = `col ${d.grid_col}  row ${d.grid_row}`;
+      } else {
+        tip.style.display = 'none';
+      }
+    }
+  }
+});
+
+canvas.addEventListener('pointerup', evt => {
+  if (!isDragging) {
+    const pick = scene.pick(evt.clientX, evt.clientY);
+
+    if (pick.hit && pick.pickedMesh && pick.pickedMesh._d) {
+      const mesh = pick.pickedMesh;
+      const alreadyIdx = selectedMeshes.indexOf(mesh);
+
+      if (alreadyIdx !== -1) {
+        // Deselect: remove from array, restore hex, remove its panel column
+        selectedMeshes.splice(alreadyIdx, 1);
+        restoreHex(mesh);
+        renderPanelColumns();
+      } else {
+        // Add if under cap; if at cap, drop the oldest (index 0)
+        if (selectedMeshes.length >= 3) {
+          const evicted = selectedMeshes.shift();
+          restoreHex(evicted);
+        }
+        selectedMeshes.push(mesh);
+        setHex(mesh, C.fill, C.edge);
+        flashHex(mesh);
+        renderPanelColumns();
+      }
+    }
+  }
+  isDragging = false;
+  canvas.releasePointerCapture(evt.pointerId);
+});
+
+// ── Scroll to zoom ────────────────────────────────────────────────────────────
+canvas.addEventListener('wheel', evt => {
+  evt.preventDefault();
+  const factor = evt.deltaY > 0 ? 1.12 : 0.89;
+  orthoH = Math.min(20, Math.max(2, orthoH * factor));
+  applyOrtho();
+}, { passive: false });
+
+// ── Test score data ───────────────────────────────────────────────────────────
+const SCORES = {"6":{"english_language_arts_proficiency":[0.1789,0.251,0.2871,0.3384,null],"mathematics_proficiency":[0.0852,0.0711,0.0792,0.1162,null],"science_proficiency":[0.1776,0.2596,0.3524,0.3673,null],"english_language_proficiency":[0.013,0.0375,0.0267,0.0253,null]},"16":{"english_language_arts_proficiency":[0.087,0.185,0.069,0.1579,null],"mathematics_proficiency":[null,null,0.0,0.0526,null],"science_proficiency":[0.045,0.189,0.1714,0.15,null],"english_language_proficiency":[0.0,0.027,0.0571,0.0333,null]},"17":{"english_language_arts_proficiency":[0.0833,0.1389,0.2,0.2,null],"mathematics_proficiency":[0.0541,null,0.0,0.0,null],"science_proficiency":[0.08,0.1053,0.1935,0.1379,null],"english_language_proficiency":[0.0,0.0,0.0,0.0,null]},"24":{"english_language_arts_proficiency":[0.7284,0.6184,0.5,null,null],"mathematics_proficiency":[0.5556,0.3816,0.0,null,null],"science_proficiency":[0.6747,0.641,0.7356,0.7658,null],"english_language_proficiency":[0.0,0.0,0.0,0.0,null]},"25":{"english_language_arts_proficiency":[0.2382,0.2336,0.2982,0.3566,null],"mathematics_proficiency":[0.1265,0.0686,0.1382,0.1471,null],"science_proficiency":[0.3292,0.2073,0.3765,0.3121,null],"english_language_proficiency":[0.0307,0.0674,0.1032,0.0772,null]},"28":{"english_language_arts_proficiency":[0.3778,0.4759,0.3957,0.4409,null],"mathematics_proficiency":[0.2815,0.2986,0.2695,0.2205,null],"science_proficiency":[0.339,0.2881,0.3704,0.2083,null],"english_language_proficiency":[0.0,0.1795,0.0,0.075,null]},"30":{"english_language_arts_proficiency":[0.25,0.125,0.0769,0.0,null],"mathematics_proficiency":[0.25,null,0.0,0.0,null],"science_proficiency":[0.0,0.12,0.1333,0.1579,null],"english_language_proficiency":[0.0,0.125,0.0588,0.0,null]},"35":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]},"39":{"english_language_arts_proficiency":[0.087,0.0667,0.1429,0.0667,null],"mathematics_proficiency":[null,null,0.0,0.0,null],"science_proficiency":[0.1071,0.0741,0.1667,0.1304,null],"english_language_proficiency":[0.0,0.0,0.0,0.0123,null]},"40":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]},"47":{"english_language_arts_proficiency":[0.5207,0.6308,0.5991,0.6063,null],"mathematics_proficiency":[0.3704,0.3231,0.2925,0.3394,null],"science_proficiency":[0.5321,0.621,0.7381,0.5128,null],"english_language_proficiency":[0.0417,0.0952,0.0,0.0,null]},"48":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,0.0,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,0.0,null,null]},"51":{"english_language_arts_proficiency":[0.0682,0.1635,0.169,0.2388,null],"mathematics_proficiency":[0.0345,null,0.0563,0.0299,null],"science_proficiency":[0.0244,0.1429,0.1895,0.2424,null],"english_language_proficiency":[0.0,0.044,0.0,0.0122,null]},"61":{"english_language_arts_proficiency":[0.0556,0.0444,0.0,null,null],"mathematics_proficiency":[null,null,0.0,null,null],"science_proficiency":[0.0682,0.0698,0.119,0.1087,null],"english_language_proficiency":[0.0,0.0182,0.0089,0.0168,null]},"63":{"english_language_arts_proficiency":[0.4375,0.4016,0.3333,0.4839,null],"mathematics_proficiency":[0.1563,0.2066,0.1404,0.0806,null],"science_proficiency":[0.495,0.4615,0.4649,0.6022,null],"english_language_proficiency":[0.0,0.0,0.0,0.0476,null]},"69":{"english_language_arts_proficiency":[0.1713,0.2081,0.1186,0.1975,null],"mathematics_proficiency":[0.0552,0.0459,0.0282,0.0491,null],"science_proficiency":[0.1781,0.0732,0.1481,0.2533,null],"english_language_proficiency":[0.0461,0.0256,0.0126,0.0234,null]},"90":{"english_language_arts_proficiency":[0.1111,0.1644,0.5556,0.2222,null],"mathematics_proficiency":[null,0.0548,0.0,0.0,null],"science_proficiency":[0.069,0.2419,0.169,0.1481,null],"english_language_proficiency":[0.0,0.1053,0.0625,0.0,null]},"95":{"english_language_arts_proficiency":[0.7619,0.7547,0.7944,0.7982,null],"mathematics_proficiency":[0.4381,0.3585,0.3551,0.3945,null],"science_proficiency":[0.7059,0.6667,0.5882,0.4412,null],"english_language_proficiency":[0.0,0.5556,0.0,0.0,null]},"98":{"english_language_arts_proficiency":[0.5039,0.4539,0.4839,0.4568,null],"mathematics_proficiency":[0.2558,0.3007,0.2839,0.362,null],"science_proficiency":[0.2903,0.5577,0.4182,0.4419,null],"english_language_proficiency":[0.2,0.0,0.4286,0.4,null]},"116":{"english_language_arts_proficiency":[0.5093,0.4947,0.5037,0.4922,null],"mathematics_proficiency":[0.306,0.3018,0.2873,0.293,null],"science_proficiency":[0.4118,0.5172,0.4023,0.4419,null],"english_language_proficiency":[0.0,0.0,0.0,0.0476,null]},"118":{"english_language_arts_proficiency":[0.1319,0.206,0.2612,0.2799,null],"mathematics_proficiency":[0.0723,0.1207,0.1269,0.1536,null],"science_proficiency":[0.1216,0.131,0.3111,0.1395,null],"english_language_proficiency":[0.0225,0.0445,0.043,0.0444,null]},"203":{"english_language_arts_proficiency":[0.5652,0.6546,0.6762,0.6913,0.6598],"mathematics_proficiency":[0.4739,0.5582,0.6598,0.632,0.5738],"science_proficiency":[0.6164,0.65,0.7342,0.65,null],"english_language_proficiency":[0.1522,0.1429,0.0208,0.1628,null]},"206":{"english_language_arts_proficiency":[0.2099,0.3071,0.2671,0.1867,0.2741],"mathematics_proficiency":[0.1429,0.1439,0.1164,0.1,0.0963],"science_proficiency":[0.1268,0.2857,0.2439,0.0741,null],"english_language_proficiency":[0.0379,0.0484,0.0168,0.0,null]},"207":{"english_language_arts_proficiency":[0.2308,0.2547,0.2791,0.2069,0.1806],"mathematics_proficiency":[0.2088,0.1869,0.1163,0.0909,0.0548],"science_proficiency":[0.3182,0.2059,0.3636,0.2105,null],"english_language_proficiency":[0.0,0.0141,0.0,0.0,null]},"210":{"english_language_arts_proficiency":[0.1297,0.1893,0.1789,0.2581,0.1573],"mathematics_proficiency":[0.0378,0.0865,0.1518,0.1892,0.0944],"science_proficiency":[0.2069,0.1481,0.1967,0.1667,null],"english_language_proficiency":[0.0072,0.0526,0.0,0.0719,null]},"213":{"english_language_arts_proficiency":[0.4621,0.5344,0.5038,0.5597,0.7037],"mathematics_proficiency":[0.3788,0.4122,0.3712,0.3955,0.3037],"science_proficiency":[0.5854,0.6765,0.5208,0.5106,null],"english_language_proficiency":[0.1556,0.1538,0.1875,0.04,null]},"214":{"english_language_arts_proficiency":[0.2439,0.1752,0.189,0.2716,0.2814],"mathematics_proficiency":[0.0806,0.0876,0.0714,0.0778,0.1445],"science_proficiency":[0.1795,0.325,0.2364,0.0667,null],"english_language_proficiency":[0.0,0.0526,0.098,0.0263,null]},"215":{"english_language_arts_proficiency":[0.0924,0.1271,0.1217,0.2195,0.2377],"mathematics_proficiency":[0.0427,0.0254,0.0708,0.0407,0.1129],"science_proficiency":[0.1316,0.0556,0.1351,0.1053,null],"english_language_proficiency":[0.0087,0.0153,0.0,0.0657,null]},"216":{"english_language_arts_proficiency":[0.0982,0.1416,0.1798,0.2024,0.1325],"mathematics_proficiency":[0.0354,0.0261,0.0761,0.119,0.0562],"science_proficiency":[0.0286,0.0244,0.1471,0.2069,null],"english_language_proficiency":[0.0462,0.0,0.0364,0.0159,null]},"217":{"english_language_arts_proficiency":[0.4195,0.5139,0.5314,0.6863,0.6381],"mathematics_proficiency":[0.3447,0.3889,0.5121,0.5049,0.4905],"science_proficiency":[0.3871,0.4634,0.5263,0.5571,null],"english_language_proficiency":[0.1515,0.069,0.0345,0.0833,null]},"219":{"english_language_arts_proficiency":[0.3401,0.3561,0.3859,0.388,0.3529],"mathematics_proficiency":[0.1777,0.1659,0.212,0.1694,0.2026],"science_proficiency":[0.2368,0.3077,0.5167,0.1364,null],"english_language_proficiency":[0.0308,0.0161,0.1154,0.0806,null]},"221":{"english_language_arts_proficiency":[0.7035,0.743,0.739,0.7549,0.813],"mathematics_proficiency":[0.6681,0.7309,0.632,0.7047,0.6397],"science_proficiency":[0.7143,0.7108,0.8,0.5851,null],"english_language_proficiency":[0.25,0.24,0.1628,0.2571,null]},"222":{"english_language_arts_proficiency":[0.5905,0.661,0.6835,0.6355,0.6761],"mathematics_proficiency":[0.4511,0.5401,0.4658,0.4804,0.4465],"science_proficiency":[0.5606,0.6136,0.6914,0.5,null],"english_language_proficiency":[0.1471,0.2222,0.125,0.0303,null]},"225":{"english_language_arts_proficiency":[0.1429,0.1739,0.1308,0.198,0.2874],"mathematics_proficiency":[0.0938,0.0517,0.0367,0.0891,0.0889],"science_proficiency":[0.1556,0.1053,0.1429,0.175,null],"english_language_proficiency":[0.0,0.0093,0.0105,0.0227,null]},"227":{"english_language_arts_proficiency":[0.5691,0.6983,0.6111,0.6755,0.6624],"mathematics_proficiency":[0.4597,0.6293,0.5238,0.5855,0.5159],"science_proficiency":[0.5294,0.6316,0.5789,0.5128,null],"english_language_proficiency":[0.1379,0.0741,0.037,0.04,null]},"228":{"english_language_arts_proficiency":[0.1157,0.1322,0.25,0.2288,0.2347],"mathematics_proficiency":[0.0909,0.0661,0.1182,0.1008,0.0816],"science_proficiency":[0.0769,0.0444,0.2286,0.1579,null],"english_language_proficiency":[0.0,0.0,0.0204,0.0182,null]},"229":{"english_language_arts_proficiency":[0.2581,0.3423,0.2797,0.4898,0.3765],"mathematics_proficiency":[0.129,0.1892,0.1681,0.2143,0.1647],"science_proficiency":[0.1714,0.275,0.2791,0.4444,null],"english_language_proficiency":[0.0417,0.1333,0.0357,0.0357,null]},"230":{"english_language_arts_proficiency":[0.1709,0.2041,0.1301,0.2,0.2],"mathematics_proficiency":[0.0955,0.1014,0.0629,0.0701,0.0775],"science_proficiency":[0.1111,0.2157,0.0435,0.06,null],"english_language_proficiency":[0.0725,0.0435,0.0526,0.0,null]},"231":{"english_language_arts_proficiency":[0.1959,0.2657,0.1938,0.2629,0.2705],"mathematics_proficiency":[0.1216,0.1389,0.0898,0.1571,0.1154],"science_proficiency":[0.1875,0.1154,0.1,0.1964,null],"english_language_proficiency":[0.0323,0.0227,0.0139,0.0337,null]},"234":{"english_language_arts_proficiency":[0.3295,0.3191,0.3797,0.3519,0.3929],"mathematics_proficiency":[0.1818,0.2137,0.1646,0.1835,0.1786],"science_proficiency":[0.25,0.2442,0.2391,0.2468,null],"english_language_proficiency":[0.0137,0.0286,0.027,0.1167,null]},"236":{"english_language_arts_proficiency":[0.2371,0.2677,0.191,0.2647,0.3556],"mathematics_proficiency":[0.134,0.1414,0.118,0.1059,0.1185],"science_proficiency":[0.2258,0.3167,0.1379,0.1515,null],"english_language_proficiency":[0.0,0.1489,0.0263,0.0278,null]},"237":{"english_language_arts_proficiency":[0.2471,0.2935,0.3023,0.3465,0.35],"mathematics_proficiency":[0.1034,0.1196,0.0465,0.11,0.16],"science_proficiency":[0.0357,0.2121,0.2222,0.2571,null],"english_language_proficiency":[0.0,0.0333,0.0313,0.02,null]},"240":{"english_language_arts_proficiency":[0.3237,0.3769,0.3525,0.3893,0.5047],"mathematics_proficiency":[0.1942,0.1923,0.1871,0.1985,0.215],"science_proficiency":[0.3208,0.2439,0.3556,0.3265,null],"english_language_proficiency":[0.0208,0.0263,0.0294,0.0333,null]},"241":{"english_language_arts_proficiency":[0.4118,0.3831,0.454,0.4813,0.5466],"mathematics_proficiency":[0.2549,0.2662,0.3436,0.3125,0.3665],"science_proficiency":[0.3621,0.3725,0.4643,0.3061,null],"english_language_proficiency":[0.098,0.1143,0.0303,0.0385,null]},"243":{"english_language_arts_proficiency":[0.4748,0.5375,0.5035,0.4969,0.5621],"mathematics_proficiency":[0.3165,0.2688,0.305,0.3602,0.3373],"science_proficiency":[0.4444,0.3889,0.4419,0.4464,null],"english_language_proficiency":[0.0652,0.101,0.0645,0.0543,null]},"244":{"english_language_arts_proficiency":[0.2394,0.3197,0.3533,0.3759,0.4648],"mathematics_proficiency":[0.1458,0.1973,0.1788,0.1955,0.1748],"science_proficiency":[0.2549,0.2973,0.3455,0.2045,null],"english_language_proficiency":[0.0484,0.0889,0.0794,0.0968,null]},"249":{"english_language_arts_proficiency":[null,null,0.2778,null,null],"mathematics_proficiency":[null,null,0.1892,null,null],"science_proficiency":[null,null,0.1667,null,null],"english_language_proficiency":[null,null,0.0,null,null]},"250":{"english_language_arts_proficiency":[0.1387,0.2176,0.2311,0.3393,0.3814],"mathematics_proficiency":[0.0764,0.0921,0.0566,0.1205,0.134],"science_proficiency":[0.086,0.2234,0.2537,0.1216,null],"english_language_proficiency":[0.01,0.0256,0.0281,0.0353,null]},"252":{"english_language_arts_proficiency":[0.15,0.2924,0.2965,0.3333,0.3077],"mathematics_proficiency":[0.0944,0.152,0.1686,0.1887,0.2179],"science_proficiency":[0.1786,0.2037,0.1875,0.2667,null],"english_language_proficiency":[0.0345,0.0578,0.0559,0.0485,null]},"255":{"english_language_arts_proficiency":[0.0909,0.1104,0.1926,0.2183,0.172],"mathematics_proficiency":[0.0559,0.0519,0.0593,0.0563,0.0714],"science_proficiency":[0.0847,0.0227,0.1224,0.0577,null],"english_language_proficiency":[0.0144,0.0224,0.0455,0.0366,null]},"258":{"english_language_arts_proficiency":[0.2152,0.2704,0.2384,0.3565,0.3684],"mathematics_proficiency":[0.0818,0.1646,0.1921,0.213,0.2022],"science_proficiency":[0.1628,0.1452,0.2553,0.1842,null],"english_language_proficiency":[0.0179,0.0345,0.0682,0.0638,null]},"260":{"english_language_arts_proficiency":[0.3527,0.3729,0.3563,0.5388,0.5909],"mathematics_proficiency":[0.2614,0.2869,0.2851,0.3721,0.3223],"science_proficiency":[0.3103,0.4,0.4225,0.2821,null],"english_language_proficiency":[0.0455,0.0946,0.0677,0.1615,null]},"261":{"english_language_arts_proficiency":[0.1754,0.2,0.0889,0.0889,0.2549],"mathematics_proficiency":[0.1404,0.0469,0.0222,0.0889,0.098],"science_proficiency":[0.0526,0.25,0.0769,0.0769,null],"english_language_proficiency":[0.0392,0.0238,0.0238,0.0,null]},"262":{"english_language_arts_proficiency":[0.2124,0.2459,0.2659,0.3167,0.3866],"mathematics_proficiency":[0.1057,0.1585,0.1127,0.1378,0.1483],"science_proficiency":[0.1364,0.3125,0.2593,0.181,null],"english_language_proficiency":[0.1139,0.1345,0.0078,0.0365,null]},"264":{"english_language_arts_proficiency":[0.4968,0.5577,0.5537,0.5217,0.5018],"mathematics_proficiency":[0.4444,0.4615,0.3824,0.3367,0.3213],"science_proficiency":[0.4727,0.6044,0.4867,0.3786,null],"english_language_proficiency":[0.1395,0.2927,0.1429,0.175,null]},"265":{"english_language_arts_proficiency":[0.3578,0.3577,0.3629,0.4144,0.4577],"mathematics_proficiency":[0.206,0.1951,0.2246,0.3153,0.2786],"science_proficiency":[0.321,0.3243,0.3766,0.2169,null],"english_language_proficiency":[0.0244,0.0,null,null,null]},"267":{"english_language_arts_proficiency":[0.3511,0.4419,0.4924,0.5079,0.4841],"mathematics_proficiency":[0.2672,0.3594,0.306,0.3571,0.3095],"science_proficiency":[0.3043,0.3077,0.4773,0.4651,null],"english_language_proficiency":[0.069,0.0417,0.1053,0.0,null]},"268":{"english_language_arts_proficiency":[0.7539,0.8012,0.8007,0.7535,0.729],"mathematics_proficiency":[0.6321,0.7248,0.7318,0.6947,0.6641],"science_proficiency":[0.6875,0.75,0.7664,0.7387,null],"english_language_proficiency":[0.137,0.2754,0.1594,0.1875,null]},"270":{"english_language_arts_proficiency":[0.2346,0.2563,0.226,0.2857,0.2083],"mathematics_proficiency":[0.1043,0.0988,0.1258,0.1176,0.1507],"science_proficiency":[0.1455,0.2,0.24,0.1887,null],"english_language_proficiency":[0.0146,0.0336,0.0087,0.0085,null]},"273":{"english_language_arts_proficiency":[0.1977,0.1844,0.1923,0.2566,0.234],"mathematics_proficiency":[0.1,0.1006,0.025,0.0592,0.0915],"science_proficiency":[0.2281,0.1667,0.1667,0.0656,null],"english_language_proficiency":[0.0,0.0115,0.0,0.0244,null]},"275":{"english_language_arts_proficiency":[0.2517,0.3463,0.3529,0.3564,0.3052],"mathematics_proficiency":[0.2303,0.2447,0.1832,0.2117,0.1526],"science_proficiency":[0.1619,0.2358,0.234,0.2245,null],"english_language_proficiency":[0.0286,0.0642,0.0597,0.0556,null]},"276":{"english_language_arts_proficiency":[0.3711,0.3875,0.3584,0.3711,0.3292],"mathematics_proficiency":[0.1963,0.1852,0.2184,0.2264,0.1779],"science_proficiency":[0.4138,0.4783,0.3492,0.2745,null],"english_language_proficiency":[0.0638,0.0345,0.0909,0.0727,null]},"279":{"english_language_arts_proficiency":[0.1429,0.1961,0.25,0.1429,0.2653],"mathematics_proficiency":[0.0571,0.1176,0.1042,0.0204,0.0408],"science_proficiency":[0.1176,0.0556,0.125,0.0,null],"english_language_proficiency":[0.0769,0.0909,0.0,0.0,null]},"280":{"english_language_arts_proficiency":[0.2146,0.2271,0.2543,0.332,0.2783],"mathematics_proficiency":[0.0843,0.0982,0.0997,0.108,0.0789],"science_proficiency":[0.1319,0.1111,0.1075,0.1605,null],"english_language_proficiency":[0.0206,0.027,0.0548,0.0319,null]},"285":{"english_language_arts_proficiency":[0.0882,0.1047,0.0731,0.1594,0.1788],"mathematics_proficiency":[0.0673,0.0469,0.0273,0.0433,0.1676],"science_proficiency":[0.0575,0.0541,0.0794,0.0893,null],"english_language_proficiency":[0.0226,0.0289,0.0073,0.0249,null]},"288":{"english_language_arts_proficiency":[0.1348,0.1818,0.1591,0.2048,0.2012],"mathematics_proficiency":[0.0894,0.0761,0.067,0.0361,0.0412],"science_proficiency":[0.1311,0.1053,0.1846,0.2031,null],"english_language_proficiency":[0.019,0.0189,0.0354,0.0648,null]},"291":{"english_language_arts_proficiency":[0.38,0.4239,0.2959,0.2424,0.2692],"mathematics_proficiency":[0.25,0.1957,0.2041,0.2222,0.141],"science_proficiency":[0.2143,0.25,0.3056,0.25,null],"english_language_proficiency":[0.0488,0.0244,0.0789,0.0263,null]},"295":{"english_language_arts_proficiency":[0.4258,0.4392,0.5379,0.4964,0.5735],"mathematics_proficiency":[0.3442,0.2838,0.3182,0.2701,0.2537],"science_proficiency":[0.5333,0.413,0.4898,0.5217,null],"english_language_proficiency":[0.0,0.0357,0.0,0.125,null]},"297":{"english_language_arts_proficiency":[0.2569,0.2182,0.25,0.2717,0.2088],"mathematics_proficiency":[0.211,0.1364,0.1263,0.1304,0.1209],"science_proficiency":[0.1515,0.25,0.1389,0.0857,null],"english_language_proficiency":[0.0208,0.0543,0.0732,0.0132,null]},"300":{"english_language_arts_proficiency":[0.0943,0.0909,0.0826,0.1786,0.1573],"mathematics_proficiency":[0.0472,0.0165,0.0273,0.0526,0.0562],"science_proficiency":[0.1034,0.0233,0.0333,0.0938,null],"english_language_proficiency":[0.0316,0.0313,0.0357,0.0,null]},"303":{"english_language_arts_proficiency":[0.3378,0.4848,0.4257,0.3917,0.4078],"mathematics_proficiency":[0.3243,0.3485,0.2,0.281,0.1553],"science_proficiency":[0.2813,0.4091,0.2273,0.186,null],"english_language_proficiency":[0.0,0.1923,0.0364,0.0204,null]},"305":{"english_language_arts_proficiency":[0.3171,0.4382,0.2697,0.36,0.3684],"mathematics_proficiency":[0.1463,0.25,0.1136,0.2763,0.1711],"science_proficiency":[0.2,0.2903,0.1667,0.1786,null],"english_language_proficiency":[0.05,0.1429,0.0714,0.1667,null]},"307":{"english_language_arts_proficiency":[0.2466,0.2619,0.2921,0.2644,0.253],"mathematics_proficiency":[0.2143,0.1446,0.1011,0.1163,0.0723],"science_proficiency":[0.1481,0.1923,0.1852,0.2821,null],"english_language_proficiency":[0.0357,0.0435,0.0476,0.0,null]},"309":{"english_language_arts_proficiency":[0.184,0.1928,0.2885,0.3121,0.3758],"mathematics_proficiency":[0.1205,0.1205,0.1195,0.2025,0.242],"science_proficiency":[0.1837,0.3636,0.3279,0.25,null],"english_language_proficiency":[0.0,0.0702,0.0536,0.0345,null]},"310":{"english_language_arts_proficiency":[0.3243,0.438,0.4275,0.4286,0.4216],"mathematics_proficiency":[0.2215,0.2044,0.1778,0.2302,0.2157],"science_proficiency":[0.2979,0.2955,0.32,0.28,null],"english_language_proficiency":[0.0789,0.1818,0.0345,0.0333,null]},"312":{"english_language_arts_proficiency":[0.5932,0.6567,0.5377,0.5463,0.6316],"mathematics_proficiency":[0.4703,0.4627,0.405,0.3707,0.4],"science_proficiency":[0.6053,0.5588,0.6,0.3818,null],"english_language_proficiency":[0.2069,0.037,0.0606,0.075,null]},"315":{"english_language_arts_proficiency":[0.1753,0.2054,0.2333,0.2614,0.3158],"mathematics_proficiency":[0.1392,0.1257,0.0865,0.1429,0.1429],"science_proficiency":[0.1515,0.2,0.2593,0.1852,null],"english_language_proficiency":[0.0278,0.039,0.0137,0.0118,null]},"317":{"english_language_arts_proficiency":[0.4489,0.4974,0.5467,0.5652,0.5442],"mathematics_proficiency":[0.3422,0.4105,0.3822,0.3768,0.4],"science_proficiency":[0.3448,0.5313,0.5385,0.2813,null],"english_language_proficiency":[0.0241,0.0952,0.1538,0.0678,null]},"321":{"english_language_arts_proficiency":[0.4308,0.4498,0.4074,0.4583,0.4167],"mathematics_proficiency":[0.3333,0.3206,0.3862,0.349,0.3214],"science_proficiency":[0.4576,0.5139,0.4706,0.2958,null],"english_language_proficiency":[0.0625,0.0,0.0,0.0,null]},"324":{"english_language_arts_proficiency":[0.1504,0.2609,0.1415,0.2193,0.0792],"mathematics_proficiency":[0.0677,0.0879,0.0755,0.1111,0.0588],"science_proficiency":[0.18,0.1667,0.2059,0.1429,null],"english_language_proficiency":[0.0316,0.0139,0.0,0.0,null]},"327":{"english_language_arts_proficiency":[0.2486,0.2011,0.1582,0.2083,0.1905],"mathematics_proficiency":[0.1297,0.0598,0.073,0.0595,0.0599],"science_proficiency":[0.3279,0.1129,0.1379,0.0615,null],"english_language_proficiency":[0.036,0.0183,0.0385,0.0516,null]},"328":{"english_language_arts_proficiency":[0.7481,0.7695,0.7313,0.7548,0.7306],"mathematics_proficiency":[0.695,0.6911,0.6825,0.6566,0.6367],"science_proficiency":[0.7292,0.7558,0.7024,0.6316,null],"english_language_proficiency":[0.1111,0.1944,0.1912,0.1148,null]},"329":{"english_language_arts_proficiency":[0.3673,0.3904,0.3857,0.3691,0.3885],"mathematics_proficiency":[0.2973,0.3129,0.2857,0.2162,0.2548],"science_proficiency":[0.3617,0.375,0.5333,0.2708,null],"english_language_proficiency":[0.0,0.1111,0.0488,0.0455,null]},"330":{"english_language_arts_proficiency":[0.2075,0.2041,0.2708,0.3168,0.3333],"mathematics_proficiency":[0.0472,0.1122,0.0938,0.1287,0.1935],"science_proficiency":[0.0938,0.2121,0.1429,0.1111,null],"english_language_proficiency":[0.0,0.0465,0.0,0.0417,null]},"332":{"english_language_arts_proficiency":[0.4855,0.5476,0.5607,0.5708,0.6413],"mathematics_proficiency":[0.4398,0.4333,0.472,0.4505,0.4888],"science_proficiency":[0.4468,0.5571,0.4615,0.3492,null],"english_language_proficiency":[0.1111,0.0909,0.0,0.093,null]},"333":{"english_language_arts_proficiency":[0.1379,0.1269,0.1057,0.3113,0.3564],"mathematics_proficiency":[0.1026,0.0597,0.0569,0.1038,0.1089],"science_proficiency":[0.0385,0.125,0.1489,0.2069,null],"english_language_proficiency":[0.0,0.0519,0.0367,0.0957,null]},"336":{"english_language_arts_proficiency":[0.1513,0.181,0.2062,0.2644,0.2941],"mathematics_proficiency":[0.0672,0.0857,0.1237,0.1609,0.1395],"science_proficiency":[0.0976,0.2564,0.1795,0.3684,null],"english_language_proficiency":[0.0274,0.0339,0.037,0.093,null]},"339":{"english_language_arts_proficiency":[0.1978,0.34,0.2703,0.3409,0.2871],"mathematics_proficiency":[0.1007,0.188,0.1256,0.1955,0.134],"science_proficiency":[0.2045,0.1959,0.2466,0.2609,null],"english_language_proficiency":[0.0222,0.0679,0.0206,0.0881,null]},"345":{"english_language_arts_proficiency":[0.6605,0.6667,0.5323,0.7048,0.6845],"mathematics_proficiency":[0.4753,0.3778,0.3495,0.4398,0.5357],"science_proficiency":[0.8393,0.6316,0.697,0.6,null],"english_language_proficiency":[0.25,0.0,0.0,0.0,null]},"348":{"english_language_arts_proficiency":[0.3961,0.4792,0.4776,0.6016,0.5133],"mathematics_proficiency":[0.2468,0.2727,0.3284,0.3692,0.2533],"science_proficiency":[0.377,0.4444,0.4375,0.3939,null],"english_language_proficiency":[0.0,0.075,0.075,0.1053,null]},"350":{"english_language_arts_proficiency":[0.6968,0.8131,0.7685,0.8197,0.8316],"mathematics_proficiency":[0.6823,0.6886,0.6779,0.7406,0.7333],"science_proficiency":[0.6957,0.8878,0.7547,0.7263,null],"english_language_proficiency":[0.2083,0.0357,0.129,0.2308,null]},"351":{"english_language_arts_proficiency":[0.52,0.6391,0.5833,0.6432,0.5977],"mathematics_proficiency":[0.5098,0.5089,0.4335,0.4695,0.4141],"science_proficiency":[0.4906,0.6735,0.5085,0.5,null],"english_language_proficiency":[0.0,0.2143,0.0909,0.0667,null]},"356":{"english_language_arts_proficiency":[0.3866,0.4366,0.4271,0.4975,0.4974],"mathematics_proficiency":[0.2353,0.3052,0.2663,0.2386,0.3016],"science_proficiency":[0.4222,0.4706,0.5079,0.4,null],"english_language_proficiency":[0.0789,0.0976,0.0263,0.1333,null]},"357":{"english_language_arts_proficiency":[0.2929,0.3404,0.3689,0.4159,0.4435],"mathematics_proficiency":[0.2042,0.2908,0.187,0.2389,0.2087],"science_proficiency":[0.2653,0.3488,0.2407,0.3514,null],"english_language_proficiency":[0.0625,0.1,0.0,0.0645,null]},"360":{"english_language_arts_proficiency":[0.7396,0.7692,0.7761,0.7757,0.7684],"mathematics_proficiency":[0.5472,0.6015,0.6679,0.614,0.6471],"science_proficiency":[0.7143,0.6737,0.7204,0.6667,null],"english_language_proficiency":[0.15,0.2692,0.1739,0.0455,null]},"363":{"english_language_arts_proficiency":[0.163,0.1462,0.2414,0.3367,0.3182],"mathematics_proficiency":[0.1176,0.0769,0.1121,0.1633,0.125],"science_proficiency":[0.1957,0.0811,0.1628,0.1579,null],"english_language_proficiency":[0.0147,0.0484,0.0357,0.0952,null]},"364":{"english_language_arts_proficiency":[0.3636,0.2333,0.2245,0.3373,0.2778],"mathematics_proficiency":[0.2222,0.2111,0.1048,0.1047,0.1778],"science_proficiency":[0.275,0.1923,0.2222,0.08,null],"english_language_proficiency":[0.0256,0.0,0.0238,0.0435,null]},"365":{"english_language_arts_proficiency":[0.3408,0.3484,0.3453,0.4667,0.5435],"mathematics_proficiency":[0.2342,0.2108,0.2297,0.2653,0.3043],"science_proficiency":[0.2857,0.375,0.1867,0.2716,null],"english_language_proficiency":[0.0625,0.0811,0.05,0.1316,null]},"370":{"english_language_arts_proficiency":[0.131,0.2358,0.1607,0.2041,0.27],"mathematics_proficiency":[0.0417,0.1057,0.0796,0.0909,0.1],"science_proficiency":[0.0893,0.1,0.1739,0.1,null],"english_language_proficiency":[0.0577,0.0488,0.0349,0.0494,null]},"373":{"english_language_arts_proficiency":[0.2593,0.28,0.2333,0.3205,0.3514],"mathematics_proficiency":[0.0741,0.1111,0.1333,0.1026,0.1892],"science_proficiency":[0.0,0.4595,0.3636,0.0882,null],"english_language_proficiency":[0.0,0.0385,0.0588,0.037,null]},"376":{"english_language_arts_proficiency":[0.1667,0.1709,0.156,0.1455,0.2442],"mathematics_proficiency":[0.088,0.0855,0.055,0.0734,0.0588],"science_proficiency":[0.1395,0.1714,0.1765,0.0952,null],"english_language_proficiency":[0.0,0.0543,0.0118,0.0485,null]},"379":{"english_language_arts_proficiency":[0.254,0.2308,0.2087,0.189,0.2045],"mathematics_proficiency":[0.0787,0.1069,0.1085,0.0827,0.0833],"science_proficiency":[0.1389,0.1111,0.1667,0.0976,null],"english_language_proficiency":[0.0172,0.0484,0.0,0.0101,null]},"385":{"english_language_arts_proficiency":[0.4851,0.5566,0.4643,0.5327,0.4955],"mathematics_proficiency":[0.3551,0.3364,0.2348,0.3458,0.3482],"science_proficiency":[0.2857,0.6129,0.359,0.3429,null],"english_language_proficiency":[0.0,0.1463,0.1458,0.0732,null]},"388":{"english_language_arts_proficiency":[0.3388,0.2743,0.3333,0.2685,0.3579],"mathematics_proficiency":[0.2314,0.1858,0.1197,0.1296,0.1579],"science_proficiency":[0.4048,0.325,0.3947,0.1463,null],"english_language_proficiency":[0.0,0.0769,0.0345,0.1111,null]},"389":{"english_language_arts_proficiency":[0.5045,0.5246,0.4724,0.4518,0.5546],"mathematics_proficiency":[0.3058,0.3232,0.3065,0.3249,0.3115],"science_proficiency":[0.3533,0.3742,0.3529,0.2826,null],"english_language_proficiency":[0.0282,0.1184,0.0746,0.1091,null]},"392":{"english_language_arts_proficiency":[0.2733,0.282,0.2559,0.2662,0.2897],"mathematics_proficiency":[0.0733,0.1057,0.087,0.1367,0.1225],"science_proficiency":[0.1416,0.2099,0.1467,0.1124,null],"english_language_proficiency":[0.0309,0.0701,0.0345,0.034,null]},"393":{"english_language_arts_proficiency":[0.4708,0.4808,0.4871,0.4764,0.55],"mathematics_proficiency":[0.3832,0.3525,0.3276,0.3276,0.365],"science_proficiency":[0.4078,0.3333,0.4634,0.2892,null],"english_language_proficiency":[0.1333,0.1395,0.1613,0.1111,null]},"395":{"english_language_arts_proficiency":[null,0.135,0.2147,0.262,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[0.0,0.0372,0.0132,0.0118,null]},"405":{"english_language_arts_proficiency":[0.2082,0.1904,0.1685,0.3185,0.3264],"mathematics_proficiency":[0.0777,0.0614,0.0467,0.1044,0.1283],"science_proficiency":[0.1076,0.0775,0.1959,0.177,null],"english_language_proficiency":[0.0,0.0148,0.0,0.0741,null]},"407":{"english_language_arts_proficiency":[0.3575,0.3541,0.3766,0.5274,0.4289],"mathematics_proficiency":[0.2746,0.23,0.2542,0.2632,0.2446],"science_proficiency":[0.3812,0.3836,0.4122,0.375,null],"english_language_proficiency":[0.0227,0.0114,0.0417,0.0548,null]},"410":{"english_language_arts_proficiency":[0.142,0.216,0.1939,0.3138,0.2342],"mathematics_proficiency":[0.1191,0.122,0.1142,0.1176,0.1333],"science_proficiency":[0.0833,0.1717,0.2234,0.2143,null],"english_language_proficiency":[0.022,0.0149,0.0794,0.0,null]},"413":{"english_language_arts_proficiency":[0.3639,0.3971,0.3913,0.4079,0.3532],"mathematics_proficiency":[0.2047,0.2176,0.1711,0.1957,0.203],"science_proficiency":[0.2429,0.281,0.3689,0.3854,null],"english_language_proficiency":[0.0,0.0182,0.0167,0.0208,null]},"415":{"english_language_arts_proficiency":[0.1872,0.225,0.122,0.2548,0.2292],"mathematics_proficiency":[0.1019,0.0997,0.0508,0.0698,0.0706],"science_proficiency":[0.0833,0.1101,0.1389,0.2159,null],"english_language_proficiency":[0.0,0.0321,0.0,0.0696,null]},"416":{"english_language_arts_proficiency":[0.1932,0.1949,0.2212,0.2538,0.2462],"mathematics_proficiency":[0.068,0.0748,0.033,0.0621,0.0967],"science_proficiency":[0.1961,0.11,0.202,0.1138,null],"english_language_proficiency":[0.0065,0.0301,0.012,0.0519,null]},"418":{"english_language_arts_proficiency":[0.4078,0.5147,0.4524,0.557,0.5461],"mathematics_proficiency":[0.2961,0.3067,0.3175,0.3526,0.388],"science_proficiency":[0.2714,0.1854,0.4375,0.5126,null],"english_language_proficiency":[0.0606,0.0,0.0,0.0294,null]},"420":{"english_language_arts_proficiency":[0.3233,0.3487,0.4176,0.4609,0.4209],"mathematics_proficiency":[0.1953,0.1821,0.1831,0.1963,0.1582],"science_proficiency":[0.2174,0.3333,0.4211,0.2846,null],"english_language_proficiency":[0.0196,0.1579,0.098,0.0667,null]},"425":{"english_language_arts_proficiency":[0.4648,0.5332,0.4906,0.5483,0.4955],"mathematics_proficiency":[0.3994,0.351,0.3135,0.3694,0.3323],"science_proficiency":[0.3556,0.4183,0.4833,0.3947,null],"english_language_proficiency":[0.0109,0.0658,0.0725,0.0125,null]},"427":{"english_language_arts_proficiency":[0.1988,0.2392,0.2367,0.2609,0.1815],"mathematics_proficiency":[0.1239,0.0933,0.0634,0.0471,0.0285],"science_proficiency":[0.2932,0.2128,0.354,0.1196,null],"english_language_proficiency":[0.0,0.0233,0.0238,0.0135,null]},"430":{"english_language_arts_proficiency":[0.6687,0.7321,0.6649,0.7094,0.6865],"mathematics_proficiency":[0.631,0.6211,0.5816,0.6068,0.6141],"science_proficiency":[0.7664,0.616,0.6212,0.6612,null],"english_language_proficiency":[0.1,0.1176,0.102,0.0635,null]},"435":{"english_language_arts_proficiency":[0.4992,0.5027,0.4338,0.4892,0.4872],"mathematics_proficiency":[0.2998,0.3078,0.251,0.2534,0.2831],"science_proficiency":[0.33,0.3947,0.3908,0.4084,null],"english_language_proficiency":[0.0,0.06,0.0526,0.0588,null]},"440":{"english_language_arts_proficiency":[0.1811,0.2198,0.2363,0.2469,0.2514],"mathematics_proficiency":[0.1013,0.0933,0.0823,0.0698,0.1056],"science_proficiency":[0.2053,0.2273,0.277,0.145,null],"english_language_proficiency":[0.0,0.0246,0.0088,0.0,null]},"445":{"english_language_arts_proficiency":[0.1267,0.2036,0.2123,0.2635,0.226],"mathematics_proficiency":[0.0816,0.0792,0.081,0.1121,0.0911],"science_proficiency":[0.1133,0.1117,0.1733,0.1866,null],"english_language_proficiency":[0.0064,0.0051,0.0248,0.0081,null]},"448":{"english_language_arts_proficiency":[0.1051,0.1905,0.2428,0.256,0.1702],"mathematics_proficiency":[0.0775,0.1078,0.0902,0.0874,0.027],"science_proficiency":[0.1667,0.1519,0.2,0.2571,null],"english_language_proficiency":[0.0096,0.037,0.0116,0.0147,null]},"450":{"english_language_arts_proficiency":[0.1836,0.1922,0.1585,0.2679,0.1641],"mathematics_proficiency":[0.0846,0.0803,0.0723,0.0858,0.0829],"science_proficiency":[0.15,0.1319,0.2222,0.1855,null],"english_language_proficiency":[0.0052,0.024,0.0272,0.0057,null]},"452":{"english_language_arts_proficiency":[0.531,0.6085,0.6404,0.6572,0.5707],"mathematics_proficiency":[0.4286,0.427,0.3989,0.4242,0.4011],"science_proficiency":[0.5538,0.5263,0.5893,0.6198,null],"english_language_proficiency":[0.5,0.0,0.0,0.0,null]},"455":{"english_language_arts_proficiency":[0.316,0.386,0.3462,0.3014,null],"mathematics_proficiency":[0.265,0.2222,0.0945,0.1143,null],"science_proficiency":[0.1505,0.2283,0.1705,0.2222,null],"english_language_proficiency":[0.0,0.0,0.0152,0.0851,null]},"457":{"english_language_arts_proficiency":[0.2595,0.289,0.3577,0.31,0.3673],"mathematics_proficiency":[0.1938,0.1367,0.1606,0.1775,0.1689],"science_proficiency":[0.2277,0.2212,0.4259,0.2381,null],"english_language_proficiency":[0.0,0.0179,0.0185,0.0,null]},"460":{"english_language_arts_proficiency":[0.1618,0.1453,0.137,0.1627,0.1617],"mathematics_proficiency":[0.0976,0.0654,0.0547,0.0733,0.0453],"science_proficiency":[0.1168,0.1172,0.1296,0.1316,null],"english_language_proficiency":[0.0267,0.0169,0.0119,0.0,null]},"465":{"english_language_arts_proficiency":[0.206,0.2355,0.249,0.2748,0.2578],"mathematics_proficiency":[0.1141,0.1241,0.0731,0.0684,0.0881],"science_proficiency":[0.1203,0.0935,0.1789,0.0886,null],"english_language_proficiency":[0.0,0.0098,0.0094,0.0,null]},"470":{"english_language_arts_proficiency":[0.1531,0.2027,0.1833,0.2006,0.1702],"mathematics_proficiency":[0.1224,0.086,0.058,0.0725,0.0641],"science_proficiency":[0.1942,0.1579,0.0859,0.1121,null],"english_language_proficiency":[0.0,0.0,0.0092,0.0,null]},"475":{"english_language_arts_proficiency":[0.2158,0.2427,0.2428,0.2817,0.2565],"mathematics_proficiency":[0.1068,0.0859,0.0716,0.0805,0.1135],"science_proficiency":[0.2095,0.2092,0.1406,0.1135,null],"english_language_proficiency":[0.0155,0.0469,0.009,0.0279,null]},"480":{"english_language_arts_proficiency":[0.6876,0.755,0.7503,0.7486,0.7037],"mathematics_proficiency":[0.5859,0.5655,0.59,0.605,0.5623],"science_proficiency":[0.5768,0.6426,0.6807,0.6406,null],"english_language_proficiency":[0.1818,0.2857,0.1707,0.0625,null]},"485":{"english_language_arts_proficiency":[0.4822,0.4093,0.4269,0.5303,0.5121],"mathematics_proficiency":[0.2618,0.2467,0.237,0.2473,0.2222],"science_proficiency":[0.3831,0.3472,0.3646,0.3472,null],"english_language_proficiency":[0.0169,0.0755,0.0208,0.0526,null]},"490":{"english_language_arts_proficiency":[0.3148,0.4917,0.4127,0.4976,0.4174],"mathematics_proficiency":[0.2647,0.2481,0.2394,0.2699,0.25],"science_proficiency":[0.3774,0.3276,0.375,0.2851,null],"english_language_proficiency":[0.0667,0.0128,0.0676,0.0,null]},"492":{"english_language_arts_proficiency":[0.4938,0.5538,0.4972,0.5779,0.5479],"mathematics_proficiency":[0.4044,0.4167,0.363,0.41,0.3921],"science_proficiency":[0.3159,0.4417,0.4413,0.4267,null],"english_language_proficiency":[0.0484,0.1493,0.0588,0.0256,null]},"496":{"english_language_arts_proficiency":[0.2558,0.2847,0.301,0.3266,0.2955],"mathematics_proficiency":[0.1355,0.1136,0.102,0.1136,0.0985],"science_proficiency":[0.2006,0.1753,0.1683,0.1793,null],"english_language_proficiency":[0.029,0.0299,0.025,0.0345,null]},"497":{"english_language_arts_proficiency":[0.3914,0.4399,0.3988,0.4829,0.4067],"mathematics_proficiency":[0.2417,0.233,0.1892,0.2407,0.245],"science_proficiency":[0.2103,0.2566,0.2708,0.3348,null],"english_language_proficiency":[0.0145,0.0423,0.049,0.0444,null]},"498":{"english_language_arts_proficiency":[0.3738,0.3865,0.3907,0.4008,0.3578],"mathematics_proficiency":[0.1963,0.1288,0.1534,0.1815,0.1408],"science_proficiency":[0.3313,0.3182,0.2786,0.2432,null],"english_language_proficiency":[0.0556,0.0583,0.025,0.0,null]},"514":{"english_language_arts_proficiency":[0.2455,0.2405,0.3021,0.3005,null],"mathematics_proficiency":[0.1138,0.0633,0.0677,0.057,null],"science_proficiency":[0.277,0.3296,0.3395,0.3229,null],"english_language_proficiency":[0.0266,0.0893,0.0533,0.0372,null]},"515":{"english_language_arts_proficiency":[0.595,0.5723,0.5706,0.6482,null],"mathematics_proficiency":[0.3769,0.3931,0.274,0.3257,null],"science_proficiency":[0.5472,0.5925,0.5812,0.6006,null],"english_language_proficiency":[0.0167,0.0533,0.0659,0.0141,null]},"516":{"english_language_arts_proficiency":[0.6964,0.4651,0.6557,0.6857,null],"mathematics_proficiency":[0.5357,0.3953,0.377,0.3429,null],"science_proficiency":[0.7143,0.6,0.6984,0.7297,null],"english_language_proficiency":[0.3333,0.1,0.0,0.125,null]},"517":{"english_language_arts_proficiency":[0.2828,0.335,null,0.2563,null],"mathematics_proficiency":[0.1061,0.0493,null,0.0302,null],"science_proficiency":[0.3713,0.2968,0.2092,0.1512,null],"english_language_proficiency":[0.0,0.069,0.0405,0.0,null]},"520":{"english_language_arts_proficiency":[0.2624,0.1852,0.228,0.3125,null],"mathematics_proficiency":[0.1135,0.0635,0.072,0.0913,null],"science_proficiency":[0.3868,0.1293,0.2,0.2819,null],"english_language_proficiency":[0.0186,0.0223,0.0402,0.0127,null]},"525":{"english_language_arts_proficiency":[0.7,0.7494,0.7111,0.7919,null],"mathematics_proficiency":[0.5103,0.5547,0.4321,0.5,null],"science_proficiency":[0.7434,0.6934,0.6934,0.6344,null],"english_language_proficiency":[0.2157,0.1646,0.1412,0.1231,null]},"530":{"english_language_arts_proficiency":[0.305,0.3704,0.3158,0.3792,null],"mathematics_proficiency":[0.1,0.1019,0.0861,0.0583,null],"science_proficiency":[0.3266,0.3211,0.2324,0.303,null],"english_language_proficiency":[0.0085,0.037,0.024,0.0237,null]},"540":{"english_language_arts_proficiency":[0.2778,0.2108,0.2155,0.2586,null],"mathematics_proficiency":[0.0778,0.0735,0.037,0.0276,null],"science_proficiency":[0.1557,0.1788,0.2056,0.2329,null],"english_language_proficiency":[0.0039,0.0115,0.016,0.032,null]},"549":{"english_language_arts_proficiency":[0.1111,0.2727,0.0,0.0,null],"mathematics_proficiency":[null,null,0.0,0.0,null],"science_proficiency":[0.1667,0.125,null,0.0,null],"english_language_proficiency":[0.0,0.0,0.0,0.0,null]},"550":{"english_language_arts_proficiency":[0.5233,0.5637,0.5527,0.6011,null],"mathematics_proficiency":[0.3397,0.293,0.245,0.2623,null],"science_proficiency":[0.5357,0.5821,0.463,0.5598,null],"english_language_proficiency":[0.0336,0.031,0.0229,0.0303,null]},"560":{"english_language_arts_proficiency":[0.3493,0.4114,0.3069,0.4132,null],"mathematics_proficiency":[0.137,0.1257,0.0594,0.0898,null],"science_proficiency":[0.3051,0.255,0.2562,0.3239,null],"english_language_proficiency":[0.0,0.0241,0.0088,0.0483,null]},"570":{"english_language_arts_proficiency":[0.2749,0.2694,0.2302,0.3462,null],"mathematics_proficiency":[0.0515,0.0443,0.0412,0.0592,null],"science_proficiency":[0.2556,0.3223,0.2651,0.3406,null],"english_language_proficiency":[0.0249,0.0637,0.0927,0.0648,null]},"575":{"english_language_arts_proficiency":[0.4614,0.4979,0.4794,0.5528,null],"mathematics_proficiency":[0.2649,0.2146,0.177,0.176,null],"science_proficiency":[0.4966,0.529,0.4319,0.4684,null],"english_language_proficiency":[0.0505,0.0818,0.0992,0.016,null]},"576":{"english_language_arts_proficiency":[0.2207,0.2947,0.2247,0.3215,null],"mathematics_proficiency":[0.0704,0.0816,0.0272,0.038,null],"science_proficiency":[0.1778,0.199,0.2628,0.2608,null],"english_language_proficiency":[0.0306,0.11,0.0546,0.0703,null]},"580":{"english_language_arts_proficiency":[0.4475,0.396,0.5195,0.5216,null],"mathematics_proficiency":[0.2222,0.1914,0.1714,0.1329,null],"science_proficiency":[0.383,0.2357,0.5917,0.5282,null],"english_language_proficiency":[0.0595,0.0633,0.0686,0.0341,null]},"590":{"english_language_arts_proficiency":[0.4152,0.4019,0.443,0.5062,null],"mathematics_proficiency":[0.2758,0.1838,0.2081,0.216,null],"science_proficiency":[0.48,0.4917,0.437,0.4709,null],"english_language_proficiency":[0.0333,0.0263,0.0389,0.0537,null]},"591":{"english_language_arts_proficiency":[0.5645,0.5862,0.7083,0.6818,null],"mathematics_proficiency":[0.3226,0.4138,0.2778,0.3485,null],"science_proficiency":[0.6769,0.6393,0.7632,0.6912,null],"english_language_proficiency":[0.1,0.125,null,null,null]},"593":{"english_language_arts_proficiency":[0.6735,0.8367,0.3743,0.7308,null],"mathematics_proficiency":[0.4898,0.5714,0.1345,0.5577,null],"science_proficiency":[0.78,0.7143,0.7797,0.7679,null],"english_language_proficiency":[0.2222,0.1667,0.2105,0.0,null]},"596":{"english_language_arts_proficiency":[0.1667,0.4545,0.2,0.2222,null],"mathematics_proficiency":[0.0833,0.1818,0.0,0.0,null],"science_proficiency":[0.375,0.4737,0.3913,0.4,null],"english_language_proficiency":[0.0,0.0,0.0,0.0,null]},"597":{"english_language_arts_proficiency":[0.1538,0.1579,0.0714,0.0833,null],"mathematics_proficiency":[null,null,0.0,0.0,null],"science_proficiency":[0.2,0.1154,0.1333,0.1818,null],"english_language_proficiency":[0.0,0.0,0.0,0.0769,null]},"611":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]},"612":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]},"706":{"english_language_arts_proficiency":[0.5,0.5663,0.5222,0.6596,null],"mathematics_proficiency":[0.3846,0.4699,0.4111,0.5,null],"science_proficiency":[0.5833,0.6818,0.5789,0.4839,null],"english_language_proficiency":[0.05,0.1429,0.1053,0.0556,null]},"707":{"english_language_arts_proficiency":[0.1818,0.2857,0.0,0.0,null],"mathematics_proficiency":[null,null,0.0,0.0333,null],"science_proficiency":[0.125,0.16,0.2195,0.0,null],"english_language_proficiency":[0.0,0.0,0.0323,0.0222,null]},"708":{"english_language_arts_proficiency":[0.1143,0.0889,0.25,null,null],"mathematics_proficiency":[0.0571,0.0222,0.125,null,null],"science_proficiency":[0.1875,0.1489,0.2162,0.0513,null],"english_language_proficiency":[0.0204,0.0109,0.0494,0.0,null]},"709":{"english_language_arts_proficiency":[0.25,0.3065,0.3647,0.3226,null],"mathematics_proficiency":[0.5,0.3065,0.1882,0.1324,null],"science_proficiency":[null,0.3571,0.3438,0.2778,null],"english_language_proficiency":[0.0,0.0714,0.1333,0.0,null]},"749":{"english_language_arts_proficiency":[0.0857,0.1795,0.0,0.075,null],"mathematics_proficiency":[null,0.0256,0.0,0.0,null],"science_proficiency":[0.1667,0.1277,0.0741,0.0444,null],"english_language_proficiency":[0.0,0.0,0.0,0.0,null]},"750":{"english_language_arts_proficiency":[0.069,0.2,0.2,0.15,null],"mathematics_proficiency":[null,0.0545,0.0,0.0,null],"science_proficiency":[0.1905,0.0781,0.2809,0.2277,null],"english_language_proficiency":[0.0,0.0,0.0,0.0147,null]},"752":{"english_language_arts_proficiency":[0.0303,0.0741,0.5,0.0263,null],"mathematics_proficiency":[null,null,0.0,0.0,null],"science_proficiency":[0.1538,0.0,0.1795,0.175,null],"english_language_proficiency":[0.0357,0.0169,0.0635,0.0164,null]},"753":{"english_language_arts_proficiency":[0.0741,0.0256,0.3333,null,null],"mathematics_proficiency":[0.037,null,0.0,null,null],"science_proficiency":[0.2414,0.0625,0.1296,0.0526,null],"english_language_proficiency":[0.0,0.0149,0.0,0.0,null]},"768":{"english_language_arts_proficiency":[0.5856,0.6176,0.6964,0.8105,null],"mathematics_proficiency":[0.5967,0.5245,0.6205,0.6478,null],"science_proficiency":[0.64,0.7115,0.7627,0.7922,null],"english_language_proficiency":[0.0435,0.1481,0.0476,0.1364,null]},"780":{"english_language_arts_proficiency":[0.4362,0.4362,0.4669,0.5493,null],"mathematics_proficiency":[0.2943,0.2766,0.2369,0.25,null],"science_proficiency":[0.6211,0.449,0.3333,0.2809,null],"english_language_proficiency":[0.0355,0.0714,0.0663,0.0741,null]},"781":{"english_language_arts_proficiency":[0.3111,0.3855,0.3481,0.369,null],"mathematics_proficiency":[0.2167,0.1807,0.105,0.0833,null],"science_proficiency":[0.2105,0.4211,0.3051,0.2571,null],"english_language_proficiency":[0.0286,0.0294,0.0,0.0625,null]},"782":{"english_language_arts_proficiency":[0.0909,0.2,0.32,null,null],"mathematics_proficiency":[0.1364,null,0.24,null,null],"science_proficiency":[0.1429,0.2222,0.2,null,null],"english_language_proficiency":[0.0,0.1667,0.1667,null,null]},"840":{"english_language_arts_proficiency":[0.1053,null,0.1429,null,0.0],"mathematics_proficiency":[0.1053,null,0.0,null,0.0],"science_proficiency":[0.125,null,null,null,null],"english_language_proficiency":[0.0,0.0,null,null,null]},"900":{"english_language_arts_proficiency":[0.7378,0.8663,0.8324,0.8947,0.8368],"mathematics_proficiency":[0.7317,0.7849,0.7527,0.7579,0.7474],"science_proficiency":[0.66,0.7551,0.8305,0.7059,null],"english_language_proficiency":[0.0,0.2143,0.1,0.5,null]},"952":{"english_language_arts_proficiency":[0.7868,0.7838,0.7853,0.7888,0.7716],"mathematics_proficiency":[0.6741,0.6149,0.5951,0.6522,0.6481],"science_proficiency":[0.6591,0.8108,0.7292,0.7255,null],"english_language_proficiency":[0.0,0.0,0.0,0.5,null]},"983":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]},"992":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]},"997":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]},"998":{"english_language_arts_proficiency":[null,null,null,null,null],"mathematics_proficiency":[null,null,null,null,null],"science_proficiency":[null,null,null,null,null],"english_language_proficiency":[null,null,null,null,null]}};
+
+const METRIC_COLORS = {
+  english_language_arts_proficiency: { line: '#58a6ff', area: 'rgba(88,166,255,0.12)', dot: '#58a6ff' },
+  mathematics_proficiency:           { line: '#d2a8ff', area: 'rgba(210,168,255,0.12)', dot: '#d2a8ff' },
+  science_proficiency:               { line: '#3fb950', area: 'rgba(63,185,80,0.12)',   dot: '#3fb950' },
+  english_language_proficiency:      { line: '#ffa657', area: 'rgba(255,166,87,0.12)',  dot: '#ffa657' },
+};
+
+const YEARS = ["2021-22","2022-23","2023-24","2024-25","2025-26"];
+
+function drawSparkline(svgId, values, color) {
+  const svg = document.getElementById(svgId);
+  svg.innerHTML = '';
+  const W = 242, H = 38, PAD = 4;
+  const valid = values.filter(v => v !== null && !isNaN(v));
+  if (valid.length === 0) {
+    const t = document.createElementNS('http://www.w3.org/2000/svg','text');
+    t.setAttribute('x','50%'); t.setAttribute('y','55%');
+    t.setAttribute('text-anchor','middle'); t.setAttribute('fill','#3d444d');
+    t.setAttribute('font-size','10'); t.textContent = 'No data';
+    svg.appendChild(t); return;
+  }
+  const minV = Math.min(...valid), maxV = Math.max(...valid);
+  const range = maxV - minV || 0.01;
+
+  const xStep = (W - PAD*2) / (values.length - 1);
+  const toX = i => PAD + i * xStep;
+  const toY = v => v === null || isNaN(v) ? null : H - PAD - ((v - minV) / range) * (H - PAD*2);
+  const clampY = y => Math.min(H - PAD, Math.max(PAD, y));
+
+  // Area fill
+  let pts = values.map((v, i) => [toX(i), toY(v)]).filter(p => p[1] !== null);
+  if (pts.length >= 2) {
+    let d = `M${pts[0][0]},${clampY(pts[0][1])}`;
+    for (let i=1; i<pts.length; i++) d += ` L${pts[i][0]},${clampY(pts[i][1])}`;
+    d += ` L${pts[pts.length-1][0]},${H-PAD} L${pts[0][0]},${H-PAD} Z`;
+    const area = document.createElementNS('http://www.w3.org/2000/svg','path');
+    area.setAttribute('d', d); area.setAttribute('fill', color.area);
+    svg.appendChild(area);
+  }
+
+  // Line
+  let linePts = [];
+  for (let i=0; i<values.length; i++) {
+    const y = toY(values[i]);
+    if (y === null) { if (linePts.length) { drawLine(svg, linePts, color.line); linePts = []; } continue; }
+    linePts.push([toX(i), clampY(y)]);
+  }
+  if (linePts.length >= 2) drawLine(svg, linePts, color.line);
+
+  // Crosshair line (hidden by default)
+  const xhair = document.createElementNS('http://www.w3.org/2000/svg','line');
+  xhair.setAttribute('y1', PAD); xhair.setAttribute('y2', H - PAD);
+  xhair.setAttribute('stroke', 'rgba(255,255,255,0.15)');
+  xhair.setAttribute('stroke-width', '1');
+  xhair.setAttribute('stroke-dasharray', '2,2');
+  xhair.style.display = 'none';
+  svg.appendChild(xhair);
+
+  // Dots + invisible hit targets
+  const dotEls = [];
+  for (let i=0; i<values.length; i++) {
+    const y = toY(values[i]);
+    if (y === null) { dotEls.push(null); continue; }
+    const cy = clampY(y);
+    const cx = toX(i);
+
+    // Visible dot
+    const circle = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    circle.setAttribute('cx', cx); circle.setAttribute('cy', cy); circle.setAttribute('r', '3');
+    circle.setAttribute('fill', color.dot);
+    circle.setAttribute('stroke', 'rgba(13,17,23,0.8)'); circle.setAttribute('stroke-width', '1.5');
+    svg.appendChild(circle);
+    dotEls.push({ el: circle, cx, cy });
+
+    // Large invisible hit area
+    const hit = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    hit.setAttribute('cx', cx); hit.setAttribute('cy', cy); hit.setAttribute('r', '14');
+    hit.setAttribute('fill', 'transparent');
+    hit.style.cursor = 'pointer';
+    svg.appendChild(hit);
+
+    // Hover/click handlers
+    const showTip = (e) => {
+      // Scale dot
+      circle.setAttribute('r', '4.5');
+      circle.setAttribute('stroke-width', '2');
+      // Show crosshair
+      xhair.setAttribute('x1', cx); xhair.setAttribute('x2', cx);
+      xhair.style.display = '';
+      // Position tooltip using actual screen coords of the hit circle
+      const tip = document.getElementById('spark-tip');
+      document.getElementById('st-year').textContent = YEARS[i];
+      document.getElementById('st-val').textContent = pct(values[i]);
+      tip.style.borderColor = color.line;
+      tip.style.color = color.line;
+      tip.style.display = 'block';
+      const hitRect = hit.getBoundingClientRect();
+      const tipW = tip.offsetWidth;
+      const tipH = tip.offsetHeight;
+      // Centre tip on dot horizontally, place above it
+      let tx = hitRect.left + hitRect.width / 2 - tipW / 2;
+      let ty = hitRect.top - tipH - 6;
+      // Clamp to viewport
+      tx = Math.max(4, Math.min(window.innerWidth - tipW - 4, tx));
+      if (ty < 4) ty = hitRect.bottom + 6;
+      tip.style.left = tx + 'px';
+      tip.style.top  = ty + 'px';
+      e.stopPropagation();
+    };
+
+    const hideTip = () => {
+      circle.setAttribute('r', '3');
+      circle.setAttribute('stroke-width', '1.5');
+      xhair.style.display = 'none';
+      document.getElementById('spark-tip').style.display = 'none';
+    };
+
+    hit.addEventListener('mouseenter', showTip);
+    hit.addEventListener('mouseleave', hideTip);
+    hit.addEventListener('click', showTip);
+    hit.addEventListener('touchstart', (e) => { showTip(e); }, { passive: true });
+  }
+}
+
+function drawLine(svg, pts, stroke) {
+  const line = document.createElementNS('http://www.w3.org/2000/svg','polyline');
+  line.setAttribute('points', pts.map(p=>p.join(',')).join(' '));
+  line.setAttribute('fill','none');
+  line.setAttribute('stroke', stroke);
+  line.setAttribute('stroke-width','1.8');
+  line.setAttribute('stroke-linejoin','round');
+  line.setAttribute('stroke-linecap','round');
+  svg.appendChild(line);
+}
+
+function pct(v) {
+  if (v === null || isNaN(v)) return null;
+  return (v * 100).toFixed(1) + '%';
+}
+
+function latestScoreChange(values) {
+  // Compare the latest available score against the immediately previous
+  // available score. This allows 2025-2026 to drive the arrow when present,
+  // while still falling back to 2024-2025 vs. 2023-2024 for metrics that do
+  // not yet have a 2025-2026 value.
+  const valid = values
+    .map((v, i) => ({ value: v, index: i }))
+    .filter(d => d.value !== null && !isNaN(d.value));
+
+  if (valid.length < 2) return 0;
+  const latest = valid[valid.length - 1].value;
+  const previous = valid[valid.length - 2].value;
+  return latest - previous;
+}
+
+function trendClass(values) {
+  const diff = latestScoreChange(values);
+  if (diff > 0.0001) return 'sp-trend-up';
+  if (diff < -0.0001) return 'sp-trend-down';
+  return 'sp-trend-flat';
+}
+
+function trendArrow(values) {
+  const cls = trendClass(values);
+  if (cls === 'sp-trend-up') return '▲';
+  if (cls === 'sp-trend-down') return '▼';
+  return '●';
+}
+
+// Pre-compute district-level stats per metric for the most recent year with broadest coverage.
+// For each metric we collect all schools' latest valid value, sort, then expose median + rank lookup.
+const DISTRICT_STATS = (() => {
+  const metricKeys = [
+    'english_language_arts_proficiency',
+    'mathematics_proficiency',
+    'science_proficiency',
+    'english_language_proficiency',
+  ];
+  const result = {};
+  for (const key of metricKeys) {
+    // Gather {locationid, value} for each school using the same "latest valid" logic as the panel
+    const entries = [];
+    for (const [lid, data] of Object.entries(SCORES)) {
+      if (!data[key]) continue;
+      const latest = [...data[key]].reverse().find(v => v !== null && !isNaN(v));
+      if (latest !== undefined) entries.push({ lid, value: latest });
+    }
+    entries.sort((a, b) => a.value - b.value);
+    const n = entries.length;
+    const median = n === 0 ? null
+      : n % 2 === 1 ? entries[Math.floor(n / 2)].value
+      : (entries[n / 2 - 1].value + entries[n / 2].value) / 2;
+    // Build rank lookup: rank 1 = lowest (ascending), we'll display as percentile
+    const rankMap = {};
+    entries.forEach((e, i) => { rankMap[e.lid] = i + 1; }); // 1-based rank from bottom
+    result[key] = { median, n, rankMap };
+  }
+  return result;
+})();
+
+function renderRankGap(divId, metricKey, locationid) {
+  const div = document.getElementById(divId);
+  if (!div) return;
+  const stats = DISTRICT_STATS[metricKey];
+  if (!stats || stats.median === null) { div.innerHTML = ''; return; }
+
+  const schoolData = SCORES[String(locationid)];
+  if (!schoolData || !schoolData[metricKey]) { div.innerHTML = ''; return; }
+  const latest = [...schoolData[metricKey]].reverse().find(v => v !== null && !isNaN(v));
+  if (latest === undefined) { div.innerHTML = ''; return; }
+
+  const rankFromBottom = stats.rankMap[String(locationid)];
+  if (rankFromBottom === undefined) { div.innerHTML = ''; return; }
+  // Percentile rank (0–100), higher = better
+  const pctRank = Math.round(((rankFromBottom - 1) / (stats.n - 1)) * 100);
+  const ordinal = n => {
+    const s = ['th','st','nd','rd'], v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+
+  const gap = latest - stats.median;
+  const gapPP = (gap * 100).toFixed(1);
+  const gapClass = gap > 0.001 ? 'above' : gap < -0.001 ? 'below' : 'even';
+  const gapSign = gap > 0.001 ? '+' : '';
+  const gapSymbol = gap > 0.001 ? '▲ ' : gap < -0.001 ? '▼ ' : '● ';
+  const medianPct = (stats.median * 100).toFixed(1);
+
+  div.innerHTML =
+    `<span class="sp-rank">Dist. rank <span>${ordinal(pctRank)} pctile</span> of ${stats.n}</span>` +
+    `<span class="sp-gap ${gapClass}">${gapSymbol}${gapSign}${gapPP} pp vs. median (${medianPct}%)</span>`;
+}
+
+function populateScorePanel(locationid, lid) {
+  lid = lid !== undefined ? String(lid) : String(locationid);
+  const data = SCORES[String(locationid)];
+  const metrics = [
+    { key: 'english_language_arts_proficiency', valId: `sp-ela-val-${lid}`,  arrowId: `sp-ela-arrow-${lid}`,  sparkId: `sp-ela-spark-${lid}`,  rankGapId: `sp-ela-rankgap-${lid}`  },
+    { key: 'mathematics_proficiency',           valId: `sp-math-val-${lid}`, arrowId: `sp-math-arrow-${lid}`, sparkId: `sp-math-spark-${lid}`, rankGapId: `sp-math-rankgap-${lid}` },
+    { key: 'science_proficiency',               valId: `sp-sci-val-${lid}`,  arrowId: `sp-sci-arrow-${lid}`,  sparkId: `sp-sci-spark-${lid}`,  rankGapId: `sp-sci-rankgap-${lid}`  },
+    { key: 'english_language_proficiency',      valId: `sp-elp-val-${lid}`,  arrowId: `sp-elp-arrow-${lid}`,  sparkId: `sp-elp-spark-${lid}`,  rankGapId: `sp-elp-rankgap-${lid}`  },
+  ];
+
+  if (!data) {
+    metrics.forEach(m => {
+      const el = document.getElementById(m.valId);
+      el.textContent = 'N/A'; el.className = 'sp-metric-val na';
+      document.getElementById(m.sparkId).innerHTML = '';
+      const rg = document.getElementById(m.rankGapId);
+      if (rg) rg.innerHTML = '';
+    });
+    return;
+  }
+
+  metrics.forEach(m => {
+    const vals = data[m.key];
+    const latest = [...vals].reverse().find(v => v !== null && !isNaN(v));
+    const el = document.getElementById(m.valId);
+    const arrowEl = document.getElementById(m.arrowId);
+    const arrow = trendArrow(vals);
+    const cls = trendClass(vals);
+    if (latest !== undefined) {
+      el.textContent = pct(latest);
+      el.className = 'sp-metric-val';
+      if (arrowEl) { arrowEl.textContent = arrow; arrowEl.className = `sp-metric-arrow ${cls}`; }
+    } else {
+      el.textContent = 'N/A'; el.className = 'sp-metric-val na';
+      if (arrowEl) { arrowEl.textContent = ''; }
+    }
+    drawSparkline(m.sparkId, vals, METRIC_COLORS[m.key]);
+    renderRankGap(m.rankGapId, m.key, locationid);
+  });
+}
+
+function renderPanelColumns() {
+  const container = document.getElementById('panel-container');
+  // Remove columns for deselected schools
+  const existingCols = Array.from(container.querySelectorAll('.sp-col'));
+  existingCols.forEach(col => {
+    const lid = col.dataset.locationid;
+    if (!selectedMeshes.find(m => String(m._d.locationid) === lid)) {
+      col.classList.remove('open');
+      setTimeout(() => col.remove(), 350);
+    }
+  });
+
+  // Add/update columns for selected schools
+  selectedMeshes.forEach((mesh, idx) => {
+    const d = mesh._d;
+    const lid = String(d.locationid);
+    let col = container.querySelector(`.sp-col[data-locationid="${lid}"]`);
+    if (!col) {
+      col = buildPanelColumn(d);
+      container.appendChild(col);
+      // Trigger open transition after paint
+      requestAnimationFrame(() => requestAnimationFrame(() => col.classList.add('open')));
+    }
+    // Update label to reflect position (1st, 2nd, 3rd)
+    const labelEl = col.querySelector('.sp-label');
+    if (labelEl) labelEl.textContent = idx === 0 ? 'Selected School' : `Comparison ${idx}`;
+  });
+
+  // Update statsbar hint
+  const hint = selectedMeshes.length === 0
+    ? 'hover to explore · click to select'
+    : selectedMeshes.length < 3
+    ? `${selectedMeshes.length} selected · click another to compare · click again to deselect`
+    : '3 selected (max) · click a selected school to deselect';
+  document.getElementById('statsbar').innerHTML =
+    `<span id="stat-count">${hexMeshes.length}</span> schools loaded · ${hint}`;
+
+  // Mobile drawer
+  renderDrawer();
+}
+
+function buildPanelColumn(d) {
+  const lid = String(d.locationid);
+  const col = document.createElement('div');
+  col.className = 'sp-col';
+  col.dataset.locationid = lid;
+
+  col.innerHTML = `
+    <div class="sp-header">
+      <div class="sp-label">Selected School</div>
+      <div class="sp-name">${d.sch_name}</div>
+      <div class="sp-meta">${d.level} School · ID ${d.locationid} · Col ${d.grid_col}, Row ${d.grid_row}</div>
+      <button class="sp-close" onclick="closeColumn('${lid}')">✕</button>
+    </div>
+    <div class="sp-scores">
+      <div class="sp-year-labels">
+        <span>2021-22</span><span>2022-23</span><span>2023-24</span><span>2024-25</span><span>2025-26</span>
+      </div>
+      <div class="sp-metric">
+        <div class="sp-metric-header">
+          <span class="sp-metric-name">ELA Proficiency <span class="sp-metric-arrow" id="sp-ela-arrow-${lid}"></span></span>
+          <span class="sp-metric-val" id="sp-ela-val-${lid}"></span>
+        </div>
+        <svg class="sp-sparkline" id="sp-ela-spark-${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+        <div class="sp-rankgap" id="sp-ela-rankgap-${lid}"></div>
+      </div>
+      <div class="sp-metric">
+        <div class="sp-metric-header">
+          <span class="sp-metric-name">Math Proficiency <span class="sp-metric-arrow" id="sp-math-arrow-${lid}"></span></span>
+          <span class="sp-metric-val" id="sp-math-val-${lid}"></span>
+        </div>
+        <svg class="sp-sparkline" id="sp-math-spark-${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+        <div class="sp-rankgap" id="sp-math-rankgap-${lid}"></div>
+      </div>
+      <div class="sp-metric">
+        <div class="sp-metric-header">
+          <span class="sp-metric-name">Science Proficiency <span class="sp-metric-arrow" id="sp-sci-arrow-${lid}"></span></span>
+          <span class="sp-metric-val" id="sp-sci-val-${lid}"></span>
+        </div>
+        <svg class="sp-sparkline" id="sp-sci-spark-${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+        <div class="sp-rankgap" id="sp-sci-rankgap-${lid}"></div>
+      </div>
+      <div class="sp-metric">
+        <div class="sp-metric-header">
+          <span class="sp-metric-name">EL Proficiency <span class="sp-metric-arrow" id="sp-elp-arrow-${lid}"></span></span>
+          <span class="sp-metric-val" id="sp-elp-val-${lid}"></span>
+        </div>
+        <svg class="sp-sparkline" id="sp-elp-spark-${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+        <div class="sp-rankgap" id="sp-elp-rankgap-${lid}"></div>
+      </div>
+    </div>`;
+
+  // Populate scores after DOM insertion (ids must exist)
+  requestAnimationFrame(() => populateScorePanel(d.locationid, lid));
+  return col;
+}
+
+function closeColumn(lid) {
+  const mesh = selectedMeshes.find(m => String(m._d.locationid) === lid);
+  if (mesh) {
+    selectedMeshes.splice(selectedMeshes.indexOf(mesh), 1);
+    restoreHex(mesh);
+  }
+  renderPanelColumns();
+}
+
+function closePanel() {
+  // Legacy: close all
+  selectedMeshes.forEach(m => restoreHex(m));
+  selectedMeshes = [];
+  renderPanelColumns();
+}
+
+function zoomIn()  { orthoH = Math.max(2,  orthoH * 0.78); applyOrtho(); }
+function zoomOut() { orthoH = Math.min(20, orthoH * 1.28); applyOrtho(); }
+function resetCamera() { orthoH = 10; panX = 0; panY = 0; applyOrtho(); closePanel(); }
+
+// ── Touch / mobile detection ──────────────────────────────────────────────────
+const isTouchDevice = () => window.matchMedia('(max-width: 767px)').matches || navigator.maxTouchPoints > 0 && window.matchMedia('(max-width: 767px)').matches;
+const isMobile = () => window.matchMedia('(max-width: 767px)').matches;
+
+// ── Legend toggle (mobile) ────────────────────────────────────────────────────
+function toggleLegend() {
+  document.getElementById('legend-popup').classList.toggle('open');
+}
+document.addEventListener('click', e => {
+  const btn = document.getElementById('legend-btn');
+  const popup = document.getElementById('legend-popup');
+  if (!btn.contains(e.target) && !popup.contains(e.target)) {
+    popup.classList.remove('open');
+  }
+});
+
+// ── Pinch-to-zoom ─────────────────────────────────────────────────────────────
+let pinchStartDist = null;
+let pinchStartOrthoH = null;
+
+canvas.addEventListener('touchstart', e => {
+  if (e.touches.length === 2) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    pinchStartDist = Math.hypot(dx, dy);
+    pinchStartOrthoH = orthoH;
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length === 2 && pinchStartDist !== null) {
+    const dx = e.touches[0].clientX - e.touches[1].clientX;
+    const dy = e.touches[0].clientY - e.touches[1].clientY;
+    const dist = Math.hypot(dx, dy);
+    const scale = pinchStartDist / dist;
+    orthoH = Math.min(20, Math.max(2, pinchStartOrthoH * scale));
+    applyOrtho();
+  }
+}, { passive: true });
+
+canvas.addEventListener('touchend', e => {
+  if (e.touches.length < 2) pinchStartDist = null;
+}, { passive: true });
+
+// ── Bottom drawer (mobile) ────────────────────────────────────────────────────
+let drawerActiveTab = null;
+
+function openDrawer() {
+  document.getElementById('drawer').classList.add('open');
+}
+function closeDrawer() {
+  document.getElementById('drawer').classList.remove('open');
+}
+
+function renderDrawer() {
+  if (!isMobile()) return;
+  const tabs = document.getElementById('drawer-tabs');
+  const body = document.getElementById('drawer-body');
+
+  if (selectedMeshes.length === 0) {
+    closeDrawer();
+    drawerActiveTab = null;
+    return;
+  }
+
+  // Validate active tab still selected
+  if (drawerActiveTab && !selectedMeshes.find(m => String(m._d.locationid) === drawerActiveTab)) {
+    drawerActiveTab = null;
+  }
+  if (!drawerActiveTab) drawerActiveTab = String(selectedMeshes[0]._d.locationid);
+
+  // Render tabs
+  tabs.innerHTML = selectedMeshes.map((m, i) => {
+    const lid = String(m._d.locationid);
+    const name = m._d.sch_name.replace(/ Middle School$/, '').replace(/ Middle$/, '');
+    const active = lid === drawerActiveTab ? 'active' : '';
+    return `<div class="drawer-tab ${active}" onclick="setDrawerTab('${lid}')">
+      ${name}<span class="tab-close" onclick="event.stopPropagation();closeColumn('${lid}')">✕</span>
+    </div>`;
+  }).join('');
+
+  // Render active tab body
+  const activeMesh = selectedMeshes.find(m => String(m._d.locationid) === drawerActiveTab);
+  if (!activeMesh) return;
+  const d = activeMesh._d;
+  const lid = drawerActiveTab;
+
+  body.innerHTML = `
+    <div class="sp-meta" style="font-size:10px;color:#6e7681;margin-bottom:8px;">${d.level} School · ID ${d.locationid}</div>
+    <div class="sp-year-labels">
+      <span>2021-22</span><span>2022-23</span><span>2023-24</span><span>2024-25</span><span>2025-26</span>
+    </div>
+    <div class="sp-metric">
+      <div class="sp-metric-header">
+        <span class="sp-metric-name">ELA Proficiency <span class="sp-metric-arrow" id="sp-ela-arrow-d${lid}"></span></span>
+        <span class="sp-metric-val" id="sp-ela-val-d${lid}"></span>
+      </div>
+      <svg class="sp-sparkline" id="sp-ela-spark-d${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+      <div class="sp-rankgap" id="sp-ela-rankgap-d${lid}"></div>
+    </div>
+    <div class="sp-metric">
+      <div class="sp-metric-header">
+        <span class="sp-metric-name">Math Proficiency <span class="sp-metric-arrow" id="sp-math-arrow-d${lid}"></span></span>
+        <span class="sp-metric-val" id="sp-math-val-d${lid}"></span>
+      </div>
+      <svg class="sp-sparkline" id="sp-math-spark-d${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+      <div class="sp-rankgap" id="sp-math-rankgap-d${lid}"></div>
+    </div>
+    <div class="sp-metric">
+      <div class="sp-metric-header">
+        <span class="sp-metric-name">Science Proficiency <span class="sp-metric-arrow" id="sp-sci-arrow-d${lid}"></span></span>
+        <span class="sp-metric-val" id="sp-sci-val-d${lid}"></span>
+      </div>
+      <svg class="sp-sparkline" id="sp-sci-spark-d${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+      <div class="sp-rankgap" id="sp-sci-rankgap-d${lid}"></div>
+    </div>
+    <div class="sp-metric">
+      <div class="sp-metric-header">
+        <span class="sp-metric-name">EL Proficiency <span class="sp-metric-arrow" id="sp-elp-arrow-d${lid}"></span></span>
+        <span class="sp-metric-val" id="sp-elp-val-d${lid}"></span>
+      </div>
+      <svg class="sp-sparkline" id="sp-elp-spark-d${lid}" viewBox="0 0 242 38" preserveAspectRatio="none"></svg>
+      <div class="sp-rankgap" id="sp-elp-rankgap-d${lid}"></div>
+    </div>`;
+
+  requestAnimationFrame(() => populateScorePanel(d.locationid, `d${lid}`));
+  openDrawer();
+}
+
+function setDrawerTab(lid) {
+  drawerActiveTab = lid;
+  renderDrawer();
+}
+
+createScene();
+
+function updateLabels() {
+  if (!scene || !camera) return;
+  const vp = camera.viewport.toGlobal(engine.getRenderWidth(), engine.getRenderHeight());
+  const tf = scene.getTransformMatrix();
+  // Get the root TransformNode's world matrix so we transform local hex centers through it
+  const rootNode = scene.getNodeByName("root");
+  const rootMatrix = rootNode ? rootNode.getWorldMatrix() : BABYLON.Matrix.Identity();
+  for (const mesh of hexMeshes) {
+    const d = mesh._d;
+    if (!d.labelDiv) continue;
+    // Transform the local hex center through the root node's matrix to get world position
+    const localPos = new BABYLON.Vector3(d.cx, d.cy, 0);
+    const worldPos = BABYLON.Vector3.TransformCoordinates(localPos, rootMatrix);
+    const proj = BABYLON.Vector3.Project(worldPos, BABYLON.Matrix.Identity(), tf, vp);
+    d.labelDiv.style.left = proj.x + 'px';
+    d.labelDiv.style.top  = proj.y + 'px';
+    const fs = Math.max(7, Math.min(13, 13 * (10 / orthoH)));
+    d.labelDiv.style.fontSize = fs + 'px';
+    d.labelDiv.style.opacity = orthoH > 16 ? '0' : '1';
+  }
+}
+
+engine.runRenderLoop(() => { scene.render(); updateLabels(); });
+window.addEventListener('resize', () => { engine.resize(); applyOrtho(); renderPanelColumns(); });
+</script>
+<div id="spark-tip"><span class="st-year" id="st-year"></span><span id="st-val"></span></div>
+</body>
+</html>
